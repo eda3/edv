@@ -40,20 +40,3 @@ The implementation details are further divided into the following documents:
 - [Next Steps](08_next_steps.md)
 
 For detailed development phases, module implementation details, and testing strategy, refer to the separate documentation sections. 
-
-## Current Status (2024)
-
-The EDV project has made significant progress since its initial planning:
-
-- **Phase 1** (Core Infrastructure) has been fully implemented, establishing the foundation for the project including the CLI framework and FFmpeg integration.
-
-- **Phase 2** (Extended Functionality) is approximately 70% complete, with comprehensive audio processing features and subtitle support already implemented. The remaining work in this phase focuses on timeline data model implementation.
-
-- **Phases 3 & 4** are scheduled for future development once Phase 2 is completed.
-
-For the most up-to-date information on implementation status, refer to the following documents:
-
-- [Implementation Status in Phases Overview](03_phases_overview.md#implementation-status-2024-update)
-- [Current Progress in Timeline](04_timeline.md#進捗状況の更新-2023-2024年)
-- [Current Status in Priorities](05_priorities.md#現在の進捗状況-current-implementation-status)
-- [Updated Next Steps](08_next_steps.md#2023-2024年更新現在までの進捗状況と次のステップ) 
