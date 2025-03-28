@@ -3,10 +3,9 @@
 /// This module defines the core data structures for representing
 /// subtitles, including text content, timing, and styling.
 use std::collections::HashMap;
-use std::str::FromStr;
 
 use crate::subtitle::error::{Error, Result};
-use crate::subtitle::format::{SubtitleFormat, TimePosition};
+use crate::subtitle::format::TimePosition;
 use crate::subtitle::style::TextStyle;
 
 /// Represents a single subtitle entry with timing and text.
@@ -371,8 +370,8 @@ impl SubtitleTrack {
     /// A vector of references to subtitles that overlap with the specified time range
     #[must_use]
     pub fn get_subtitles_in_range(&self, start: f64, end: f64) -> Vec<&Subtitle> {
-        let start_time = TimePosition::from_seconds(start);
-        let end_time = TimePosition::from_seconds(end);
+        let _start_time = TimePosition::from_seconds(start);
+        let _end_time = TimePosition::from_seconds(end);
 
         self.get_subtitles()
             .into_iter()
@@ -620,8 +619,8 @@ impl SubtitleBuilder {
         }
 
         // Create the subtitle
-        let mut subtitle = Subtitle {
-            id: self.id.unwrap_or_else(String::new),
+        let subtitle = Subtitle {
+            id: self.id.unwrap_or_default(),
             start_time,
             end_time,
             text: self.text,

@@ -200,7 +200,7 @@ impl FFmpegCommand {
             .stderr(Stdio::piped())
             .stdout(Stdio::piped())
             .output()
-            .map_err(|e| Error::IoError(e))?;
+            .map_err(Error::IoError)?;
 
         // Check for success
         if !output.status.success() {

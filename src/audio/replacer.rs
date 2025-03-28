@@ -231,7 +231,7 @@ where
 
     // Add replacement audio with offset if needed
     if options.offset != 0.0 {
-        cmd.input_options(&["-ss", &options.offset.to_string()])
+        cmd.input_options(["-ss", &options.offset.to_string()])
             .input(audio);
     } else {
         cmd.input(audio);
@@ -274,7 +274,7 @@ where
 
     // Build the output command
     cmd.filter_complex(&filter)
-        .output_options(&[
+        .output_options([
             "-map",
             "0:v", // Take video from the first input (original video)
             "-map",
@@ -325,7 +325,7 @@ where
     // Add input video
     cmd.input(input)
         .filter_complex("[0:a]aformat=channel_layouts=stereo,volume=0[silence]")
-        .output_options(&[
+        .output_options([
             "-map",
             "0:v", // Take video from the input
             "-map",
@@ -404,7 +404,7 @@ where
     for i in 0..segments.len() {
         filter.push_str(&format!("[seg{}]", i));
     }
-    filter.push_str(";");
+    filter.push(';');
 
     // Process each segment for replacement
     for (i, (v_start, v_end, a_start)) in segments.iter().enumerate() {
@@ -470,7 +470,7 @@ where
 
     // Build the output command
     cmd.filter_complex(&filter)
-        .output_options(&[
+        .output_options([
             "-map",
             "0:v", // Take video from the original
             "-map",

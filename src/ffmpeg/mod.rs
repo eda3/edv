@@ -1,4 +1,3 @@
-use std::error::Error as StdError;
 /// FFmpeg integration for the edv video editor.
 ///
 /// This module provides functionality for detecting, validating, and

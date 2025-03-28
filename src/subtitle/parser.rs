@@ -1,11 +1,11 @@
 use std::fs::{self, File};
 use std::io;
-use std::io::{BufRead, BufReader, Read, Write};
+use std::io::{BufRead, BufReader};
 /// Parser implementations for various subtitle formats.
 ///
 /// This module provides parsers for different subtitle formats,
 /// converting raw subtitle file content into structured subtitle tracks.
-use std::path::{Path, PathBuf};
+use std::path::Path;
 
 use crate::subtitle::error::{Error, Result};
 use crate::subtitle::format::{SubtitleFormat, TimePosition};
@@ -33,7 +33,6 @@ pub fn parse_subtitle_file<P: AsRef<Path>>(
             SubtitleFormat::Ass | SubtitleFormat::AdvancedSsa => parse_ssa(&content),
             SubtitleFormat::SubViewer => parse_subviewer(&content),
             SubtitleFormat::MicroDVD => Err(Error::unsupported_parser_format("MicroDVD")),
-            _ => Err(Error::unsupported_parser_format(format!("{}", format))),
         }
     } else {
         // Try to detect format from content
@@ -71,6 +70,7 @@ pub fn parse_subtitle_file<P: AsRef<Path>>(
 /// Returns an error if:
 /// * The file cannot be read
 /// * The format cannot be determined
+#[allow(dead_code)]
 fn detect_format_from_content<P: AsRef<Path>>(path: P) -> Result<SubtitleFormat> {
     let file = File::open(path.as_ref())?;
     let reader = BufReader::new(file);
@@ -484,7 +484,7 @@ fn parse_vtt(content: &str) -> Result<SubtitleTrack> {
 
     // Skip the WEBVTT header
     let mut header_found = false;
-    while let Some(line) = lines.next() {
+    for line in lines.by_ref() {
         if line.trim().starts_with("WEBVTT") {
             header_found = true;
             break;
@@ -562,7 +562,7 @@ fn parse_vtt_entry(id: &str, timing: &str, text: &str) -> Result<Subtitle> {
     }
 
     let start_time = times[0].trim();
-    let end_parts: Vec<&str> = times[1].trim().split_whitespace().collect();
+    let end_parts: Vec<&str> = times[1].split_whitespace().collect();
     let end_time = end_parts[0];
 
     let start = parse_vtt_time(start_time)?;

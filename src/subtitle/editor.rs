@@ -386,7 +386,7 @@ impl SubtitleEditor {
                 }
 
                 // Remove the second subtitle
-                self.track.remove_subtitle(&next.get_id());
+                self.track.remove_subtitle(next.get_id());
                 merged_count += 1;
             } else {
                 i += 1;
@@ -477,32 +477,32 @@ impl SubtitleEditor {
             for j in i + 1..ids.len() {
                 let first_id = &ids[i];
                 let second_id = &ids[j];
-                
+
                 // 両方のサブタイトルを取得して比較（ここでは読み取りのみ）
                 let first = match self.track.get_subtitle(first_id) {
                     Some(s) => s,
                     None => continue,
                 };
-                
+
                 let second = match self.track.get_subtitle(second_id) {
                     Some(s) => s,
                     None => continue,
                 };
-                
+
                 let first_start = first.get_start().as_seconds();
                 let first_end = first.get_end().as_seconds();
                 let second_start = second.get_start().as_seconds();
                 let second_end = second.get_end().as_seconds();
-                
+
                 // 時間順にならんでいることを確認
                 if first_start > second_start {
                     continue;
                 }
-                
+
                 // オーバーラップを確認
                 let overlap = first_end > second_start;
                 let gap_too_small = (second_start - first_end) < min_gap;
-                
+
                 if overlap || gap_too_small {
                     subtitle_pairs.push((
                         first_id.clone(),
@@ -512,14 +512,24 @@ impl SubtitleEditor {
                         second_start,
                         second_end,
                         overlap,
-                        gap_too_small
+                        gap_too_small,
                     ));
                 }
             }
         }
 
         // 各ペアに対して、オーバーラップ修正を適用
-        for (first_id, second_id, first_start, first_end, second_start, second_end, overlap, gap_too_small) in subtitle_pairs {
+        for (
+            first_id,
+            second_id,
+            first_start,
+            first_end,
+            second_start,
+            _second_end,
+            overlap,
+            gap_too_small,
+        ) in subtitle_pairs
+        {
             match strategy {
                 "shorten_first" => {
                     if overlap {
@@ -534,13 +544,12 @@ impl SubtitleEditor {
                     if overlap {
                         // 中間点を計算
                         let mid_point = (first_end + second_start) / 2.0;
-                        
+
                         // 変更を適用
                         if let Some(subtitle) = self.track.get_subtitle_mut(&first_id) {
                             subtitle.set_end(TimePosition::from_seconds(mid_point));
                             fixed_count += 1;
                         }
-                        
 
                         if let Some(subtitle) = self.track.get_subtitle_mut(&second_id) {
                             subtitle.set_start(TimePosition::from_seconds(mid_point));
@@ -551,14 +560,9 @@ impl SubtitleEditor {
                 "add_gap" => {
                     if overlap || gap_too_small {
                         // 必要なギャップを追加
-                        let required_gap = if gap_too_small && !overlap {
-                            min_gap
-                        } else {
-                            min_gap
-                        };
+                        let required_gap = min_gap;
 
                         let new_first_end = second_start - required_gap;
-                        let new_second_start = first_end + required_gap;
 
                         // もし逆転してしまうなら、中間点を使用
                         let (first_end_time, second_start_time) = if new_first_end < first_start {
@@ -614,7 +618,7 @@ impl SubtitleEditor {
         let content = match self.format {
             SubtitleFormat::Srt => self.track.format_as_srt(),
             SubtitleFormat::WebVtt => self.track.format_as_vtt(),
-            _ => return Err(Error::unsupported_export_format(&self.format.to_string())),
+            _ => return Err(Error::unsupported_export_format(self.format.to_string())),
         };
 
         std::fs::write(&file_path, content)?;
@@ -931,4 +935,3 @@ mod tests {
         assert!(editor.is_modified());
     }
 }
-

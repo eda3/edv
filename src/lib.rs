@@ -18,13 +18,12 @@
 /// use edv::subtitle::editor::SubtitleEditor;
 /// use edv::subtitle::format::SubtitleFormat;
 /// ```
-
 // Export modules
 pub mod audio;
-pub mod subtitle;
 pub mod ffmpeg;
+pub mod subtitle;
 
 // Reexport main types for convenience
 pub use audio::error::{Error as AudioError, Result as AudioResult};
+pub use ffmpeg::error::{Error as FFmpegError, Result as FFmpegResult};
 pub use subtitle::error::{Error as SubtitleError, Result as SubtitleResult};
-pub use ffmpeg::error::{Error as FFmpegError, Result as FFmpegResult}; 

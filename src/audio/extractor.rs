@@ -226,7 +226,7 @@ where
 /// # Errors
 ///
 /// Returns an error if the file can't be processed
-pub fn list_audio_streams<P>(ffmpeg: FFmpeg, input: P) -> Result<Vec<(usize, String, u8, u32)>>
+pub fn list_audio_streams<P>(_ffmpeg: FFmpeg, _input: P) -> Result<Vec<(usize, String, u8, u32)>>
 where
     P: AsRef<Path>,
 {
@@ -312,17 +312,18 @@ where
     let channels_str = options.channels.to_string();
 
     // Build output options as owned strings
-    let mut output_options = Vec::new();
-    output_options.push("-map".to_string());
-    output_options.push("[outa]".to_string());
-    output_options.push("-c:a".to_string());
-    output_options.push(options.codec.clone());
-    output_options.push("-b:a".to_string());
-    output_options.push(options.bitrate.clone());
-    output_options.push("-ar".to_string());
-    output_options.push(sample_rate_str);
-    output_options.push("-ac".to_string());
-    output_options.push(channels_str);
+    let output_options = vec![
+        "-map".to_string(),
+        "[outa]".to_string(),
+        "-c:a".to_string(),
+        options.codec.to_string(),
+        "-b:a".to_string(),
+        options.bitrate.to_string(),
+        "-ar".to_string(),
+        sample_rate_str,
+        "-ac".to_string(),
+        channels_str,
+    ];
 
     cmd.input(input)
         .filter_complex(&filter_complex)

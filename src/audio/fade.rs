@@ -146,15 +146,16 @@ where
     let mut cmd = FFmpegCommand::new(ffmpeg);
 
     // 出力オプションを所有型の文字列で構築
-    let mut output_options = Vec::new();
-    output_options.push("-filter:a".to_string());
-    output_options.push(fade_filter);
-    output_options.push("-c:a".to_string());
-    output_options.push(options.audio_codec.clone());
-    output_options.push("-b:a".to_string());
-    output_options.push(options.audio_bitrate.clone());
-    output_options.push("-ar".to_string());
-    output_options.push(options.sample_rate.to_string());
+    let output_options = vec![
+        "-filter:a".to_string(),
+        fade_filter,
+        "-c:a".to_string(),
+        options.audio_codec.clone(),
+        "-b:a".to_string(),
+        options.audio_bitrate.clone(),
+        "-ar".to_string(),
+        options.sample_rate.to_string(),
+    ];
 
     cmd.input(input).output_options(&output_options);
 
@@ -220,15 +221,16 @@ where
     let mut cmd = FFmpegCommand::new(ffmpeg);
 
     // 出力オプションを所有型の文字列で構築
-    let mut output_options = Vec::new();
-    output_options.push("-filter:a".to_string());
-    output_options.push(fade_filter);
-    output_options.push("-c:a".to_string());
-    output_options.push(options.audio_codec.clone());
-    output_options.push("-b:a".to_string());
-    output_options.push(options.audio_bitrate.clone());
-    output_options.push("-ar".to_string());
-    output_options.push(options.sample_rate.to_string());
+    let output_options = vec![
+        "-filter:a".to_string(),
+        fade_filter,
+        "-c:a".to_string(),
+        options.audio_codec.clone(),
+        "-b:a".to_string(),
+        options.audio_bitrate.clone(),
+        "-ar".to_string(),
+        options.sample_rate.to_string(),
+    ];
 
     cmd.input(input).output_options(&output_options);
 
@@ -300,15 +302,16 @@ where
     let mut cmd = FFmpegCommand::new(ffmpeg);
 
     // 出力オプションを所有型の文字列で構築
-    let mut output_options = Vec::new();
-    output_options.push("-filter:a".to_string());
-    output_options.push(fade_filter);
-    output_options.push("-c:a".to_string());
-    output_options.push(options.audio_codec.clone());
-    output_options.push("-b:a".to_string());
-    output_options.push(options.audio_bitrate.clone());
-    output_options.push("-ar".to_string());
-    output_options.push(options.sample_rate.to_string());
+    let output_options = vec![
+        "-filter:a".to_string(),
+        fade_filter,
+        "-c:a".to_string(),
+        options.audio_codec.clone(),
+        "-b:a".to_string(),
+        options.audio_bitrate.clone(),
+        "-ar".to_string(),
+        options.sample_rate.to_string(),
+    ];
 
     cmd.input(input).output_options(&output_options);
 
@@ -424,15 +427,16 @@ where
     let mut cmd = FFmpegCommand::new(ffmpeg);
 
     // 出力オプションを所有型の文字列で構築
-    let mut audio_options = Vec::new();
-    audio_options.push("-map".to_string());
-    audio_options.push("[outa]".to_string());
-    audio_options.push("-c:a".to_string());
-    audio_options.push(options.audio_codec.clone());
-    audio_options.push("-b:a".to_string());
-    audio_options.push(options.audio_bitrate.clone());
-    audio_options.push("-ar".to_string());
-    audio_options.push(options.sample_rate.to_string());
+    let audio_options = vec![
+        "-map".to_string(),
+        "[outa]".to_string(),
+        "-c:a".to_string(),
+        options.audio_codec.clone(),
+        "-b:a".to_string(),
+        options.audio_bitrate.clone(),
+        "-ar".to_string(),
+        options.sample_rate.to_string(),
+    ];
 
     cmd.input(input)
         .filter_complex(&filter_complex)
@@ -454,7 +458,7 @@ where
 }
 
 /// Helper function to get the duration of a media file.
-fn get_duration<P>(ffmpeg: &FFmpeg, file: P) -> Result<f64>
+fn get_duration<P>(_ffmpeg: &FFmpeg, _file: P) -> Result<f64>
 where
     P: AsRef<Path>,
 {
