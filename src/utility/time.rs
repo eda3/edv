@@ -118,7 +118,8 @@ impl Duration {
         let hours = total_seconds / 3600;
         let minutes = (total_seconds % 3600) / 60;
         let seconds = total_seconds % 60;
-        let frames = self.frames(fps) % (fps.max(0.0) as u64);
+        #[allow(clippy::cast_possible_truncation, clippy::cast_sign_loss)]
+        let frames = self.frames(fps) % (fps.max(0.0).floor() as u64);
 
         format!("{hours:02}:{minutes:02}:{seconds:02}:{frames:02}")
     }
@@ -283,7 +284,8 @@ impl TimePosition {
         let hours = total_seconds / 3600;
         let minutes = (total_seconds % 3600) / 60;
         let seconds = total_seconds % 60;
-        let frames = self.frames(fps) % (fps.max(0.0) as u64);
+        #[allow(clippy::cast_possible_truncation, clippy::cast_sign_loss)]
+        let frames = self.frames(fps) % (fps.max(0.0).floor() as u64);
 
         format!("{hours:02}:{minutes:02}:{seconds:02}:{frames:02}")
     }

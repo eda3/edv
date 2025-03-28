@@ -223,6 +223,17 @@ impl MultiTrackManager {
             .copied()
     }
 
+    /// Gets all relationships between tracks.
+    ///
+    /// # Returns
+    ///
+    /// A reference to the internal map of track dependencies, mapping source track IDs
+    /// to a map of target track IDs and their relationship types.
+    #[must_use]
+    pub fn get_all_relationships(&self) -> &HashMap<TrackId, HashMap<TrackId, TrackRelationship>> {
+        &self.dependencies
+    }
+
     /// Applies an edit operation to a track and propagates changes to related tracks.
     ///
     /// # Arguments
@@ -447,7 +458,7 @@ impl MultiTrackManager {
             // or explicit clip relationship tracking
             if let Some(source_clip) = source_clips.iter().find(|&c| 
                 // For example, matching clips that start around the same time
-                (c.position() - target_clip.position()).as_seconds().abs() < 1.0
+                f64::abs((c.position() - target_clip.position()).as_seconds()) < 1.0
             ) {
                 // Adjust target clip timing based on source clip
                 let offset_seconds = source_clip.position().as_seconds() - target_clip.position().as_seconds();
