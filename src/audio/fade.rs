@@ -27,7 +27,7 @@ pub enum FadeType {
 impl FadeType {
     /// Converts the fade type to a string recognized by `FFmpeg`.
     #[must_use]
-    fn as_ffmpeg_string(&self) -> &'static str {
+    fn as_ffmpeg_string(self) -> &'static str {
         match self {
             Self::Linear => "t",
             Self::Exponential => "exp",

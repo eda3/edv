@@ -142,6 +142,13 @@ impl<'a> FFmpegCommand<'a> {
     /// * No input files are specified
     /// * The `FFmpeg` process fails to start or returns a non-zero exit code
     ///
+    /// # Errors
+    ///
+    /// This function can return the following errors:
+    /// * `Error::MissingArgument` - If no input files are specified or no output file is specified
+    /// * `Error::IoError` - If the `FFmpeg` process fails to start
+    /// * `Error::ProcessTerminated` - If the `FFmpeg` process returns a non-zero exit code
+    ///
     /// # Panics
     ///
     /// This function should not panic as it performs explicit checks before using `unwrap()`.
