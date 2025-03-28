@@ -79,7 +79,7 @@ impl SubtitleFormat {
         match extension.as_deref() {
             Some("srt") => Ok(Self::Srt),
             Some("vtt") => Ok(Self::WebVtt),
-            Some("ass") | Some("ssa") => Ok(Self::AdvancedSsa),
+            Some(ext) if ext == "ass" || ext == "ssa" => Ok(Self::AdvancedSsa),
             Some("sub") => {
                 // For .sub files, we'll need to look at the content later
                 // to determine if it's SubViewer or MicroDVD
@@ -283,6 +283,7 @@ impl TimePosition {
     /// A new `TimePosition`
     #[must_use]
     pub fn from_seconds(total_seconds: f64) -> Self {
+        #[allow(clippy::cast_possible_truncation, clippy::cast_sign_loss)]
         let total_millis = (total_seconds * 1000.0).round() as u32;
         let milliseconds = total_millis % 1000;
         let total_seconds = total_millis / 1000;
@@ -306,9 +307,9 @@ impl TimePosition {
     /// Total seconds as a floating-point number
     #[must_use]
     pub fn to_seconds(&self) -> f64 {
-        let secs = self.seconds as f64 + (self.milliseconds as f64 / 1000.0);
-        let mins = self.minutes as f64 * 60.0;
-        let hrs = self.hours as f64 * 3600.0;
+        let secs = f64::from(self.seconds) + (f64::from(self.milliseconds) / 1000.0);
+        let mins = f64::from(self.minutes) * 60.0;
+        let hrs = f64::from(self.hours) * 3600.0;
 
         hrs + mins + secs
     }
@@ -448,10 +449,42 @@ impl TimePosition {
         )
     }
 
+    /// Parses a `TimePosition` from a string in SRT format.
+    ///
+    /// # Arguments
+    ///
+    /// * `s` - String in SRT format (HH:MM:SS,mmm)
+    ///
+    /// # Returns
+    ///
+    /// A `Result` containing the parsed `TimePosition` or an error
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if:
+    /// - The string is not in valid SRT time format (HH:MM:SS,mmm)
+    /// - Any time component is out of range (hours: 0-23, minutes/seconds: 0-59, milliseconds: 0-999)
+    /// - Any time component cannot be parsed as a number
     pub fn from_srt_string(s: &str) -> Result<Self> {
         Self::parse_srt(s)
     }
 
+    /// Parses a `TimePosition` from a string in VTT format.
+    ///
+    /// # Arguments
+    ///
+    /// * `s` - String in VTT format (HH:MM:SS.mmm)
+    ///
+    /// # Returns
+    ///
+    /// A `Result` containing the parsed `TimePosition` or an error
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if:
+    /// - The string is not in valid VTT time format (HH:MM:SS.mmm)
+    /// - Any time component is out of range (hours: 0-23, minutes/seconds: 0-59, milliseconds: 0-999)
+    /// - Any time component cannot be parsed as a number
     pub fn from_vtt_string(s: &str) -> Result<Self> {
         Self::parse_vtt(s)
     }

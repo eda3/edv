@@ -342,7 +342,7 @@ impl SubtitleEditor {
     /// # Returns
     ///
     /// The number of subtitles that were shifted
-    pub fn shift_subtitles(&mut self, shift: ShiftBuilder) -> usize {
+    pub fn shift_subtitles(&mut self, shift: &ShiftBuilder) -> usize {
         let count = shift.apply(&mut self.track);
         if count > 0 {
             self.modified = true;
@@ -768,7 +768,7 @@ mod tests {
 
         // Shift all subtitles forward by 1 second
         let shift = ShiftBuilder::new(1.0);
-        let count = editor.shift_subtitles(shift);
+        let count = editor.shift_subtitles(&shift);
         assert_eq!(count, 3);
 
         // Check that all were shifted
@@ -787,7 +787,7 @@ mod tests {
 
         // Shift only subtitles after 5 seconds
         let shift = ShiftBuilder::new(-0.5).after(TimePosition::from_seconds(5.0));
-        let count = editor.shift_subtitles(shift);
+        let count = editor.shift_subtitles(&shift);
         assert_eq!(count, 2);
 
         // Check selective shift

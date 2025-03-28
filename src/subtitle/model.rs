@@ -508,7 +508,7 @@ pub struct SubtitleBuilder {
     /// End time of the subtitle
     end_time: Option<TimePosition>,
 
-    /// Duration of the subtitle in seconds (alternative to end_time)
+    /// Duration of the subtitle in seconds (alternative to `end_time`)
     duration: Option<f64>,
 
     /// Text content of the subtitle

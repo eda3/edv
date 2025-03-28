@@ -245,8 +245,12 @@ impl TextStyle {
 
         // Position and alignment
         if let Some((x, y)) = self.position {
-            settings.push(format!("position:{}%", (x * 100.0) as u32));
-            settings.push(format!("line:{}%", (y * 100.0) as u32));
+            #[allow(clippy::cast_possible_truncation, clippy::cast_sign_loss)]
+            let x_percent = (x * 100.0) as u32;
+            #[allow(clippy::cast_possible_truncation, clippy::cast_sign_loss)]
+            let y_percent = (y * 100.0) as u32;
+            settings.push(format!("position:{x_percent}%"));
+            settings.push(format!("line:{y_percent}%"));
         } else {
             // Use alignment settings
             settings.push(format!("align:{}", self.horizontal_align));

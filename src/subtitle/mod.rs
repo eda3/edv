@@ -19,7 +19,7 @@ pub use self::editor::{ShiftBuilder, SubtitleEditor};
 ///
 /// # Features
 ///
-/// - Support for multiple subtitle formats (SRT, WebVTT)
+/// - Support for multiple subtitle formats (SRT, `WebVTT`)
 /// - Parsing and writing subtitle files
 /// - Editing subtitle content and timing
 /// - Styling subtitle text
@@ -214,7 +214,7 @@ mod tests {
 
         // Shift all subtitles by 1 second
         let shift = editor::ShiftBuilder::new(1.0);
-        editor.shift_subtitles(shift);
+        editor.shift_subtitles(&shift);
 
         // Check that the subtitle was shifted
         let subtitle = editor.get_subtitle("2").unwrap();
