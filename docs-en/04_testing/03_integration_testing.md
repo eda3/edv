@@ -105,6 +105,12 @@ These tests focus on the interaction with FFmpeg:
   - Validate parameter handling and escaping
   - Test filter graph generation
 
+- **Command Builder API Usage**:
+  - Test proper usage of the borrowing-based API
+  - Validate command reuse patterns across modules
+  - Test interoperability of different modules using the command builder
+  - Verify string lifetime management in cross-module scenarios
+
 - **Output Parsing**:
   - Test parsing FFmpeg output for progress
   - Validate error detection in FFmpeg output
@@ -152,6 +158,151 @@ These tests focus on handling multiple files:
   - Test overall progress reporting for batch operations
   - Validate individual operation progress
   - Test cancellation of batch operations
+
+### 5. Subtitle Processing Integration
+
+These tests validate the subtitle processing capabilities:
+
+- **Format Conversion Integration**:
+  - Test conversion between different subtitle formats
+  - Validate character encoding handling
+  - Test style preservation during conversion
+
+- **Editor Integration with Timeline**:
+  - Test subtitle editor integration with video timeline
+  - Validate synchronization between subtitle and video
+  - Test offset and timing adjustment with video reference
+
+- **Subtitle Rendering Pipeline**:
+  - Test subtitle burning into video
+  - Validate style application in rendered output
+  - Test export to different subtitle formats
+
+- **Complex Ownership Scenarios**:
+  - Test safe collection iteration in integrated scenarios
+  - Validate borrowing patterns when editing multiple subtitle tracks
+  - Test complex operations spanning multiple modules and components
+
+## Rust-Specific Integration Testing Considerations
+
+When writing integration tests for a Rust application, there are specific considerations related to ownership and borrowing:
+
+### 1. Cross-Module Ownership Testing
+
+Integration tests should verify that modules correctly interact with each other's ownership models:
+
+```rust
+#[test]
+fn test_subtitle_editor_integration_with_pipeline() {
+    // Setup components from different modules
+    let config = AppConfig::load_default().unwrap();
+    let mut editor = SubtitleEditor::new();
+    let pipeline = ProcessingPipeline::new(config.clone()).unwrap();
+    
+    // Test cross-module interaction
+    editor.load_file("test_fixtures/subtitles.srt").unwrap();
+    editor.shift_subtitles(ShiftBuilder::new(1.0));
+    
+    // Create a composite operation using both modules
+    let subtitle_track = editor.get_track().clone();
+    let burn_op = SubtitleBurnOperation::new(
+        "test_fixtures/video.mp4", 
+        "output.mp4",
+        subtitle_track
+    );
+    
+    // Execute the operation
+    pipeline.execute(Box::new(burn_op), None).unwrap();
+    
+    // Verify the result
+    assert!(Path::new("output.mp4").exists());
+}
+```
+
+### 2. Clone vs. Reference Strategy Testing
+
+Test scenarios where decisions need to be made between cloning data or passing references:
+
+```rust
+#[test]
+fn test_asset_reference_vs_clone() {
+    // Setup
+    let asset_manager = AssetManager::new();
+    let asset_id = asset_manager.import_asset("test_fixtures/video.mp4").unwrap();
+    
+    // Test using asset by reference (more efficient)
+    let timeline = Timeline::new();
+    let track_id = timeline.add_track(TrackType::Video).unwrap();
+    timeline.add_clip_by_reference(track_id, asset_id, 0.0, 5.0).unwrap();
+    
+    // Test using asset by clone (less coupled)
+    let asset = asset_manager.get_asset(asset_id).unwrap().clone();
+    let mut standalone_track = Track::new(TrackType::Video);
+    standalone_track.add_clip(Clip::new_with_asset(asset, 0.0, 5.0));
+    
+    // Verify both approaches work correctly
+    assert_eq!(timeline.get_tracks().len(), 1);
+    assert_eq!(timeline.get_track(track_id).unwrap().get_clips().len(), 1);
+    assert_eq!(standalone_track.get_clips().len(), 1);
+}
+```
+
+### 3. API Pattern Consistency Testing
+
+Integration tests should verify that ownership patterns are consistent across the API:
+
+```rust
+#[test]
+fn test_api_consistency() {
+    // Test with FFmpeg command builder
+    let mut ffmpeg_cmd = FFmpegCommand::new(ffmpeg.clone());
+    ffmpeg_cmd.input("input.mp4").output("output.mp4");
+    
+    // Test with subtitle editor
+    let mut editor = SubtitleEditor::new();
+    editor.add_subtitle(subtitle1).add_subtitle(subtitle2);
+    
+    // Test with audio processor
+    let mut audio_proc = AudioProcessor::new(ffmpeg.clone());
+    audio_proc.input("input.mp3").normalize(true).output("output.mp3");
+    
+    // All these APIs should follow the same pattern:
+    // 1. Methods should use &mut self rather than self
+    // 2. Methods should return &mut Self for chaining
+    // 3. Immutable operations should use &self
+}
+```
+
+### 4. Temporary Resource Management Testing
+
+Integration tests should verify proper handling of temporary resources:
+
+```rust
+#[test]
+fn test_temporary_resource_management() {
+    // Create a scope to test resource cleanup
+    {
+        // Create temporary resources
+        let temp_dir = TempDir::new("edv_test").unwrap();
+        let temp_path = temp_dir.path().join("temp_output.mp4");
+        
+        // Use temporary resources in operations
+        let mut cmd = FFmpegCommand::new(ffmpeg.clone());
+        cmd.input("input.mp4")
+           .output(&temp_path)
+           .execute()
+           .unwrap();
+        
+        // Verify temporary files were created
+        assert!(temp_path.exists());
+        
+        // Resources should be automatically cleaned up when temp_dir goes out of scope
+    }
+    
+    // Verify resources were cleaned up properly
+    assert!(!Path::new("edv_test").exists());
+}
+```
 
 ## Integration Testing Guidelines
 

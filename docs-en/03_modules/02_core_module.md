@@ -415,7 +415,172 @@ impl Logger for MultiLogger {
 }
 ```
 
-## Implementation Details
+## Implementation Guidelines
+
+When implementing the Core module, follow these guidelines:
+
+1. **Configuration System**:
+   - Use a layered approach to configuration (defaults, file, environment)
+   - Support partial configuration updates
+   - Validate configuration values
+
+2. **Error Handling**:
+   - Create a comprehensive error enum
+   - Support error chaining
+   - Include context information in errors
+
+3. **Logging System**:
+   - Support different log levels
+   - Allow multiple log destinations
+   - Include timestamps and context in log messages
+
+4. **Context Management**:
+   - Provide access to shared services
+   - Manage resource cleanup
+   - Support context cloning or referencing
+
+## Best Practices for Ownership and Borrowing
+
+When designing and implementing the Core module components, follow these best practices for Rust's ownership and borrowing system:
+
+### 1. Prefer Borrowing Over Ownership Transfer
+
+```rust
+// Good: Using borrowed references
+pub fn process_config(&self, config: &AppConfig) -> Result<()> {
+    // Work with config by reference
+}
+
+// Avoid: Taking ownership unnecessarily
+pub fn process_config(&self, config: AppConfig) -> Result<()> {
+    // Now we own config, which might not be necessary
+}
+```
+
+### 2. Return Owned Data for Factory Methods
+
+```rust
+// Good: Return owned data from constructors/factories
+pub fn create_default_config() -> AppConfig {
+    AppConfig {
+        ffmpeg_path: default_ffmpeg_path(),
+        temp_directory: default_temp_dir(),
+        // Other defaults...
+    }
+}
+```
+
+### 3. Use Clone When Shared Ownership is Needed
+
+```rust
+// Good: Clone when you need shared ownership
+pub fn with_modified_config(&self, modify_fn: impl FnOnce(&mut AppConfig)) -> Self {
+    let mut config = self.config.clone();
+    modify_fn(&mut config);
+    Self {
+        config,
+        logger: self.logger.clone(),
+        // Other fields...
+    }
+}
+```
+
+### 4. Use Accessor Methods for Immutable and Mutable Access
+
+```rust
+// Good: Provide both immutable and mutable accessors
+impl Context {
+    // Immutable access
+    pub fn config(&self) -> &AppConfig {
+        &self.config
+    }
+    
+    // Mutable access when needed
+    pub fn config_mut(&mut self) -> &mut AppConfig {
+        &mut self.config
+    }
+}
+```
+
+### 5. Implement Copy for Small Types
+
+```rust
+// Good: Implement Copy for small, stack-allocated types
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub enum LogLevel {
+    Error,
+    Warning,
+    Info,
+    Debug,
+    Trace,
+}
+```
+
+### 6. Use Arc for Shared References in Multithreaded Code
+
+```rust
+// Good: Use Arc for thread-safe shared ownership
+use std::sync::Arc;
+
+pub struct WorkerPool {
+    shared_config: Arc<AppConfig>,
+    // Other fields...
+}
+
+impl WorkerPool {
+    pub fn new(config: AppConfig) -> Self {
+        Self {
+            shared_config: Arc::new(config),
+            // Initialize other fields...
+        }
+    }
+    
+    pub fn spawn_worker(&self) -> Worker {
+        Worker::new(Arc::clone(&self.shared_config))
+    }
+}
+```
+
+### 7. Avoid Self-Referential Structures
+
+```rust
+// Avoid: Self-referential structures are difficult in Rust
+pub struct BadContext {
+    config: AppConfig,
+    // This will cause ownership problems
+    config_ref: &AppConfig, // Error: reference to field inside same struct
+}
+
+// Good: Use indices or IDs instead
+pub struct GoodContext {
+    configs: Vec<AppConfig>,
+    active_config_index: usize,
+}
+```
+
+### 8. Design APIs for Ergonomic Use
+
+```rust
+// Good: Design APIs to be both safe and ergonomic
+impl Logger {
+    // Chainable, takes &mut self
+    pub fn with_level(mut self, level: LogLevel) -> Self {
+        self.level = level;
+        self
+    }
+    
+    // Takes &self since it doesn't need to modify
+    pub fn log(&self, level: LogLevel, message: &str) {
+        if level <= self.level {
+            // Log the message
+        }
+    }
+}
+```
+
+By following these best practices, the Core module will provide a solid foundation for the rest of the application while adhering to Rust's safety principles.
+
+## Example Implementation
 
 ### Configuration Loading
 

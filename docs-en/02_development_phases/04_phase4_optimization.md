@@ -8,6 +8,82 @@ Phase 4 completes the edv project by focusing on performance optimizations, hard
 
 **Duration**: 4-6 weeks
 
+## Recent Improvements
+
+Several key optimizations have already been implemented to address ownership and reference lifetime issues:
+
+### Ownership Model Improvements
+
+#### FFmpeg Command Builder Refactoring
+- Modified `FFmpegCommand` methods to use `&mut self` instead of taking ownership
+- Changed API to return `&mut Self` for method chaining rather than consuming `self`
+- Added support for cloning and preserving the original command object when needed
+- Removed unnecessary `#[must_use]` attributes that were encouraging incorrect ownership patterns
+
+#### Example of improved API:
+```rust
+// Before - problematic ownership model:
+cmd.input(input)    // Consumes cmd, returning a new instance
+   .output_options(&[...])  // Takes ownership of returned value
+   .output(output); // Takes ownership again, can't use cmd after
+
+// After - borrowing-based API:
+cmd.input(input)    // Borrows cmd mutably, returns &mut Self
+   .output_options(&output_opts)  // Continues to use the same instance
+   .output(output); // Returns the same borrowed reference
+```
+
+### Reference Lifetime Improvements
+
+#### Temporary String References
+- Fixed issues with temporary string values being dropped while still in use
+- Implemented proper string management for FFmpeg command options and arguments
+- Created owned string collections instead of short-lived string references
+- Added explicit binding variables to extend lifetimes of converted string values
+
+#### Example of improved reference handling:
+```rust
+// Before - temporary lifetime issue:
+output_opts.push(&format!("0:a:{}", index)); // Temporary string dropped at end of statement
+
+// After - proper lifetime handling:
+let map_str = format!("0:a:{}", index);
+output_opts.push(&map_str); // Reference to string with extended lifetime
+```
+
+### Mutable Borrowing Improvements
+
+#### Subtitle Track Management
+- Implemented `get_subtitle_ids()` method to support safer iteration patterns
+- Rewritten `get_subtitles_mut()` to use `values_mut()` instead of custom collection iteration
+- Refactored `fix_overlaps()` algorithm to first collect all needed data, then perform mutations
+- Separated read operations from write operations to avoid borrow checker conflicts
+
+#### Example of improved borrowing pattern:
+```rust
+// Before - problematic borrowing pattern that led to compile-time errors:
+let subtitles = self.track.get_subtitles().to_vec();
+for pair in subtitle_pairs {
+    if let Some(subtitle) = self.track.get_subtitle_mut(&first_id) {
+        // Error: Cannot borrow self.track as mutable because it is already borrowed as immutable
+    }
+}
+
+// After - collect data first, then mutate:
+// 1. Collect all IDs
+let ids: Vec<String> = self.track.get_subtitle_ids();
+let subtitle_pairs = /* ... determine which subtitles need updating ... */;
+
+// 2. Apply changes using IDs
+for (first_id, second_id, ...) in subtitle_pairs {
+    if let Some(subtitle) = self.track.get_subtitle_mut(&first_id) {
+        // No error: No active immutable borrows at this point
+    }
+}
+```
+
+These optimizations have significantly improved code quality and eliminated several categories of ownership and borrowing errors, resulting in more maintainable and safer code. The improvements align with Rust best practices by leveraging the type system to prevent errors at compile time rather than runtime.
+
 ## Detailed Tasks
 
 ### Performance Optimizations (Weeks 1-2)

@@ -120,100 +120,210 @@ impl FFmpegWrapper {
 The command builder creates FFmpeg command lines:
 
 ```rust
+#[derive(Debug, Clone)]
 pub struct FFmpegCommand {
-    input_files: Vec<InputFile>,
-    output_files: Vec<OutputFile>,
-    global_options: Vec<String>,
+    /// The FFmpeg instance to use.
+    ffmpeg: FFmpeg,
+    /// Input options to apply before specifying inputs.
+    input_options: Vec<String>,
+    /// Input files for the command.
+    inputs: Vec<PathBuf>,
+    /// Filter complex to apply (if any).
     filter_complex: Option<String>,
+    /// Output options to apply before specifying output.
+    output_options: Vec<String>,
+    /// Output file for the command.
+    output: Option<PathBuf>,
+    /// Whether to overwrite output file if it exists.
+    overwrite: bool,
 }
 
 impl FFmpegCommand {
-    /// Create a new FFmpeg command
-    pub fn new() -> Self {
+    /// Creates a new FFmpeg command.
+    ///
+    /// # Arguments
+    ///
+    /// * `ffmpeg` - The FFmpeg instance to use
+    #[must_use]
+    pub fn new(ffmpeg: FFmpeg) -> Self {
         Self {
-            input_files: Vec::new(),
-            output_files: Vec::new(),
-            global_options: Vec::new(),
+            ffmpeg,
+            input_options: Vec::new(),
+            inputs: Vec::new(),
             filter_complex: None,
+            output_options: Vec::new(),
+            output: None,
+            overwrite: false,
         }
     }
-    
-    /// Add an input file
-    pub fn input(mut self, path: &Path, options: Vec<String>) -> Self {
-        self.input_files.push(InputFile {
-            path: path.to_path_buf(),
-            options,
-        });
-        self
-    }
-    
-    /// Add an output file
-    pub fn output(mut self, path: &Path, options: Vec<String>) -> Self {
-        self.output_files.push(OutputFile {
-            path: path.to_path_buf(),
-            options,
-        });
-        self
-    }
-    
-    /// Add a global option
-    pub fn global_option(mut self, option: &str) -> Self {
-        self.global_options.push(option.to_string());
-        self
-    }
-    
-    /// Set filter complex
-    pub fn filter_complex(mut self, filter: &str) -> Self {
-        self.filter_complex = Some(filter.to_string());
-        self
-    }
-    
-    /// Build the command arguments
-    pub fn build(&self) -> Vec<String> {
-        let mut args = Vec::new();
-        
-        // Add global options
-        for option in &self.global_options {
-            args.push(option.clone());
-        }
-        
-        // Add input files
-        for input in &self.input_files {
-            for option in &input.options {
-                args.push(option.clone());
-            }
-            args.push("-i".to_string());
-            args.push(input.path.to_string_lossy().to_string());
-        }
-        
-        // Add filter complex if present
-        if let Some(filter) = &self.filter_complex {
-            args.push("-filter_complex".to_string());
-            args.push(filter.clone());
-        }
-        
-        // Add output files
-        for output in &self.output_files {
-            for option in &output.options {
-                args.push(option.clone());
-            }
-            args.push(output.path.to_string_lossy().to_string());
-        }
-        
-        args
-    }
-}
 
-struct InputFile {
-    path: PathBuf,
-    options: Vec<String>,
-}
+    /// Adds input options to be applied before an input file.
+    ///
+    /// # Arguments
+    ///
+    /// * `options` - The options to add
+    ///
+    /// # Returns
+    ///
+    /// Self for method chaining
+    pub fn input_options<S: AsRef<str>, I: IntoIterator<Item = S>>(&mut self, options: I) -> &mut Self {
+        self.input_options
+            .extend(options.into_iter().map(|s| s.as_ref().to_string()));
+        self
+    }
 
-struct OutputFile {
-    path: PathBuf,
-    options: Vec<String>,
+    /// Adds an input file to the command.
+    ///
+    /// # Arguments
+    ///
+    /// * `input` - The input file path
+    ///
+    /// # Returns
+    ///
+    /// Self for method chaining
+    pub fn input<P: AsRef<Path>>(&mut self, input: P) -> &mut Self {
+        self.inputs.push(input.as_ref().to_path_buf());
+        self
+    }
+
+    /// Sets a filter complex for the command.
+    ///
+    /// # Arguments
+    ///
+    /// * `filter` - The filter complex string
+    ///
+    /// # Returns
+    ///
+    /// Self for method chaining
+    pub fn filter_complex<S: AsRef<str>>(&mut self, filter: S) -> &mut Self {
+        self.filter_complex = Some(filter.as_ref().to_string());
+        self
+    }
+
+    /// Adds output options to be applied before the output file.
+    ///
+    /// # Arguments
+    ///
+    /// * `options` - The options to add
+    ///
+    /// # Returns
+    ///
+    /// Self for method chaining
+    pub fn output_options<S: AsRef<str>, I: IntoIterator<Item = S>>(&mut self, options: I) -> &mut Self {
+        self.output_options
+            .extend(options.into_iter().map(|s| s.as_ref().to_string()));
+        self
+    }
+
+    /// Sets the output file for the command.
+    ///
+    /// # Arguments
+    ///
+    /// * `output` - The output file path
+    ///
+    /// # Returns
+    ///
+    /// Self for method chaining
+    pub fn output<P: AsRef<Path>>(&mut self, output: P) -> &mut Self {
+        self.output = Some(output.as_ref().to_path_buf());
+        self
+    }
+
+    /// Sets whether to overwrite the output file if it exists.
+    ///
+    /// # Arguments
+    ///
+    /// * `overwrite` - Whether to overwrite
+    ///
+    /// # Returns
+    ///
+    /// Self for method chaining
+    pub fn overwrite(&mut self, overwrite: bool) -> &mut Self {
+        self.overwrite = overwrite;
+        self
+    }
+    
+    /// Executes the FFmpeg command.
+    ///
+    /// # Returns
+    ///
+    /// A Result indicating success or an error
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if:
+    /// * No output file is specified
+    /// * No input files are specified
+    /// * The FFmpeg process fails to start or returns a non-zero exit code
+    pub fn execute(&self) -> Result<()> {
+        // Implementation details...
+    }
 }
 ```
+
+#### Best Practices for Command Builder Usage
+
+The `FFmpegCommand` API follows Rust's borrowing patterns to prevent ownership issues:
+
+1. **Method Chaining with Mutable References**
+   
+   Commands can be built using method chaining without taking ownership:
+   ```rust
+   let mut cmd = FFmpegCommand::new(ffmpeg);
+   cmd.input(input_path)
+      .output_options(&output_options)
+      .output(output_path)
+      .overwrite(true);
+   
+   cmd.execute()?;
+   ```
+
+2. **Ownership of String Arguments**
+   
+   When providing string options, use owned collections instead of short-lived references:
+   ```rust
+   // Good approach with owned strings
+   let output_options = vec![
+       "-c:a".to_string(), 
+       "aac".to_string(),
+       "-b:a".to_string(),
+       "128k".to_string()
+   ];
+   cmd.output_options(&output_options);
+   
+   // Bad approach with temporary strings
+   // cmd.output_options(&["-c:a", &codec.to_string()]);  // Error: temporary value dropped
+   ```
+
+3. **Multiple Commands From Single Template**
+   
+   When you need to reuse a command template:
+   ```rust
+   let template = FFmpegCommand::new(ffmpeg.clone())
+       .input(input_path);
+       
+   // Create multiple commands from the template
+   let mut cmd1 = template.clone();
+   cmd1.output(output_path1).execute()?;
+       
+   let mut cmd2 = template.clone();
+   cmd2.output(output_path2).execute()?;
+   ```
+
+4. **Handling String Conversions**
+   
+   For parameters that require string conversion, create bindings to extend lifetimes:
+   ```rust
+   let sample_rate_str = sample_rate.to_string();
+   let channels_str = channels.to_string();
+   
+   cmd.output_options(&[
+       "-ar", &sample_rate_str, 
+       "-ac", &channels_str
+   ]);
+   ```
+
+These practices ensure memory safety while maintaining an ergonomic API for building FFmpeg commands.
 
 ### Operation Interface (operations/mod.rs)
 

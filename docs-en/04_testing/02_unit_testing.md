@@ -101,6 +101,13 @@ The Processing module tests focus on video operations:
   - Validate parameter escaping and formatting
   - Test complex filter graph generation
 
+- **Ownership and Borrowing**:
+  - Test method chaining using mutable references
+  - Validate proper memory management in long-lived operations
+  - Test string lifetime handling in command arguments
+  - Ensure cloneable command structures work correctly
+  - Verify that multiple commands can be created from templates
+
 - **Operation Validation**:
   - Test validation of operation parameters
   - Ensure invalid parameters are rejected
@@ -167,6 +174,132 @@ The Utility module tests focus on shared utilities:
   - Test format identification from file extensions
   - Validate format compatibility checking
   - Test format conversion logic
+
+### 7. Subtitle Module
+
+The Subtitle module tests focus on subtitle handling:
+
+- **Subtitle Parsing**:
+  - Test parsing of different subtitle formats (SRT, WebVTT)
+  - Validate handling of different time formats
+  - Test error handling for malformed subtitle files
+
+- **Subtitle Track Management**:
+  - Test adding, removing, and modifying subtitles
+  - Validate track state consistency
+  - Test subtitle overlap detection and resolution
+
+- **Ownership and Borrowing**:
+  - Test proper collection iteration patterns
+  - Validate mutable reference handling
+  - Test borrowing conflicts resolution strategies
+  - Ensure safe mutable and immutable access to subtitles
+  - Verify iterator safety with complex operations
+
+- **Subtitle Rendering**:
+  - Test subtitle rendering to different formats
+  - Validate style application
+  - Test time code conversion between formats
+
+## Testing for Rust-Specific Concerns
+
+### Ownership and Reference Testing
+
+When testing Rust code, particular attention should be paid to ownership and borrowing patterns:
+
+#### 1. Method Chaining Tests
+
+```rust
+#[test]
+fn test_command_builder_method_chaining() {
+    let mut cmd = FFmpegCommand::new(ffmpeg);
+    
+    // Test that method chaining with mutable references works
+    cmd.input("input.mp4")
+       .output_options(&["-c:v", "libx264"])
+       .output("output.mp4");
+       
+    // Test that we can still use cmd after chaining
+    assert_eq!(cmd.inputs.len(), 1);
+    assert_eq!(cmd.output.as_ref().unwrap().to_str().unwrap(), "output.mp4");
+}
+```
+
+#### 2. Temporary Value Lifetime Tests
+
+```rust
+#[test]
+fn test_string_argument_lifetimes() {
+    let mut cmd = FFmpegCommand::new(ffmpeg);
+    
+    // Test with owned strings in a collection
+    let options = vec![
+        "-c:a".to_string(),
+        "aac".to_string(),
+        "-b:a".to_string(),
+        "128k".to_string()
+    ];
+    
+    cmd.output_options(&options);
+    
+    // Verify the options were captured correctly
+    assert!(cmd.output_options.contains(&"aac".to_string()));
+}
+```
+
+#### 3. Mutable Borrowing Tests
+
+```rust
+#[test]
+fn test_subtitle_track_borrowing() {
+    let mut track = SubtitleTrack::new();
+    
+    // Add some subtitles
+    track.add_subtitle(create_test_subtitle("1", 0.0, 2.0));
+    track.add_subtitle(create_test_subtitle("2", 3.0, 5.0));
+    
+    // Test safe iteration patterns
+    let ids = track.get_subtitle_ids();
+    assert_eq!(ids.len(), 2);
+    
+    // Test mutable access after collecting IDs
+    for id in &ids {
+        if let Some(subtitle) = track.get_subtitle_mut(id) {
+            subtitle.set_text("Modified");
+        }
+    }
+    
+    // Verify modifications
+    for id in &ids {
+        assert_eq!(track.get_subtitle(id).unwrap().get_text(), "Modified");
+    }
+}
+```
+
+#### 4. Clone and Template Tests
+
+```rust
+#[test]
+fn test_command_template_pattern() {
+    let template = FFmpegCommand::new(ffmpeg)
+        .input("input.mp4");
+    
+    // Create different commands from the same template
+    let mut cmd1 = template.clone();
+    cmd1.output("output1.mp4");
+    
+    let mut cmd2 = template.clone();
+    cmd2.output("output2.mp4");
+    
+    // Verify they have the same input but different outputs
+    assert_eq!(cmd1.inputs.len(), 1);
+    assert_eq!(cmd2.inputs.len(), 1);
+    assert_eq!(cmd1.output.as_ref().unwrap().to_str().unwrap(), "output1.mp4");
+    assert_eq!(cmd2.output.as_ref().unwrap().to_str().unwrap(), "output2.mp4");
+}
+```
+
+These tests help ensure that the code correctly handles Rust's ownership and borrowing rules, preventing bugs that might only manifest at runtime in less strict languages.
 
 ## Best Practices for Unit Testing
 
