@@ -400,9 +400,7 @@ where
     let segment_refs = segments
         .iter()
         .enumerate()
-        .map(|(i, _)| format!("[a{i}]"))
-        .collect::<Vec<_>>()
-        .join("");
+        .fold(String::new(), |acc, (i, _)| acc + &format!("[a{i}]"));
     let segment_count = segments.len();
 
     filter_complex.push_str(&format!(

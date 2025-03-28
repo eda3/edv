@@ -298,9 +298,7 @@ where
         segments
             .iter()
             .enumerate()
-            .map(|(i, _)| format!("[a{i}]"))
-            .collect::<Vec<_>>()
-            .join(""),
+            .fold(String::new(), |acc, (i, _)| acc + &format!("[a{i}]")),
         segments.len()
     ));
 
