@@ -88,7 +88,7 @@ pub enum Error {
     BurnError(String),
 
     /// Error in underlying `FFmpeg` operation.
-    #[error("FFmpeg error: {0}")]
+    #[error("FFmpeg error: `{0}`")]
     FFmpegError(#[from] ffmpeg::Error),
 }
 

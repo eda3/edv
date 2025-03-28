@@ -115,11 +115,11 @@ fn detect_format_from_content<P: AsRef<Path>>(path: P) -> Result<SubtitleFormat>
     Err(Error::unknown_subtitle_format())
 }
 
-/// Parses an SRT (`SubRip`) subtitle file.
+/// Parses an `SRT` subtitle file.
 ///
 /// # Arguments
 ///
-/// * `path` - Path to the SRT file
+/// * `path` - Path to the `SRT` file
 ///
 /// # Returns
 ///
@@ -129,191 +129,19 @@ fn detect_format_from_content<P: AsRef<Path>>(path: P) -> Result<SubtitleFormat>
 ///
 /// Returns an error if:
 /// * The file cannot be read
-/// * The file content is invalid SRT format
+/// * The file content is invalid `SRT` format
 pub fn parse_srt_file<P: AsRef<Path>>(path: P) -> Result<SubtitleTrack> {
     let file = File::open(path.as_ref())?;
     let reader = BufReader::new(file);
-    let lines: Vec<String> = reader.lines().collect::<io::Result<Vec<String>>>()?;
+    let content = reader
+        .lines()
+        .collect::<io::Result<Vec<String>>>()?
+        .join("\n");
 
-    let mut track = SubtitleTrack::new();
-    let mut index = 0;
-
-    while index < lines.len() {
-        // Skip empty lines
-        if lines[index].trim().is_empty() {
-            index += 1;
-            continue;
-        }
-
-        // Parse subtitle number
-        let Ok(subtitle_number) = lines[index].trim().parse::<usize>() else {
-            return Err(Error::invalid_subtitle_format("Expected subtitle number"));
-        };
-        index += 1;
-
-        // Parse time codes
-        if index >= lines.len() {
-            return Err(Error::invalid_subtitle_format("Unexpected end of file"));
-        }
-
-        let time_line = &lines[index];
-        let times: Vec<&str> = time_line.split("-->").collect();
-        if times.len() != 2 {
-            return Err(Error::invalid_subtitle_format("Invalid time format"));
-        }
-
-        let start_time = TimePosition::from_srt_string(times[0].trim())?;
-        let end_time = TimePosition::from_srt_string(times[1].trim())?;
-        index += 1;
-
-        // Parse text content (until empty line or end of file)
-        if index >= lines.len() {
-            return Err(Error::invalid_subtitle_format("Unexpected end of file"));
-        }
-
-        let mut text = String::new();
-        while index < lines.len() && !lines[index].trim().is_empty() {
-            if !text.is_empty() {
-                text.push('\n');
-            }
-            text.push_str(&lines[index]);
-            index += 1;
-        }
-
-        // Create and add subtitle
-        let subtitle =
-            Subtitle::new(start_time, end_time, text).with_id(subtitle_number.to_string());
-        track.add_subtitle(subtitle);
-
-        // Skip any empty lines
-        while index < lines.len() && lines[index].trim().is_empty() {
-            index += 1;
-        }
-    }
-
-    track.sort();
-    Ok(track)
+    parse_srt(&content)
 }
 
-/// Parses a `WebVTT` subtitle file.
-///
-/// # Arguments
-///
-/// * `path` - Path to the `WebVTT` file
-///
-/// # Returns
-///
-/// * `Result<SubtitleTrack>` - A subtitle track containing the parsed subtitles
-///
-/// # Errors
-///
-/// Returns an error if:
-/// * The file cannot be read
-/// * The file content is invalid `WebVTT` format
-pub fn parse_webvtt_file<P: AsRef<Path>>(path: P) -> Result<SubtitleTrack> {
-    let file = File::open(path.as_ref())?;
-    let reader = BufReader::new(file);
-    let lines: Vec<String> = reader.lines().collect::<io::Result<Vec<String>>>()?;
-
-    let mut track = SubtitleTrack::new();
-    let mut index = 0;
-
-    // Check for WebVTT header
-    if lines.is_empty() || !lines[0].trim().starts_with("WEBVTT") {
-        return Err(Error::invalid_subtitle_format("Missing WebVTT header"));
-    }
-    index += 1;
-
-    // Skip header until we find an empty line
-    while index < lines.len() && !lines[index].trim().is_empty() {
-        index += 1;
-    }
-
-    // Skip any empty lines
-    while index < lines.len() && lines[index].trim().is_empty() {
-        index += 1;
-    }
-
-    let mut subtitle_count = 0;
-    while index < lines.len() {
-        // Skip empty lines and comments
-        if lines[index].trim().is_empty() || lines[index].trim().starts_with("NOTE ") {
-            index += 1;
-            continue;
-        }
-
-        // Check if this line is a cue identifier or a timestamp
-        let mut cue_id = String::new();
-        let timestamp_line;
-
-        if index + 1 < lines.len() && lines[index + 1].contains("-->") {
-            // This line is a cue identifier
-            cue_id = lines[index].trim().to_string();
-            index += 1;
-            timestamp_line = &lines[index];
-        } else if lines[index].contains("-->") {
-            // This line is already a timestamp
-            timestamp_line = &lines[index];
-        } else {
-            // Invalid format
-            return Err(Error::invalid_subtitle_format("Expected timestamp line"));
-        }
-
-        // Parse timestamps
-        let times: Vec<&str> = timestamp_line.split("-->").collect();
-        if times.len() != 2 {
-            return Err(Error::invalid_subtitle_format("Invalid time format"));
-        }
-
-        let (time_part, settings_part) = match times[1].find(' ') {
-            Some(pos) => times[1].split_at(pos),
-            None => (times[1], ""),
-        };
-
-        let start_time = TimePosition::from_vtt_string(times[0].trim())?;
-        let end_time = TimePosition::from_vtt_string(time_part.trim())?;
-
-        // TODO: Parse cue settings from settings_part
-        let _settings = settings_part.trim();
-
-        index += 1;
-
-        // Parse text content (until empty line or end of file)
-        if index >= lines.len() {
-            return Err(Error::invalid_subtitle_format("Unexpected end of file"));
-        }
-
-        let mut text = String::new();
-        while index < lines.len() && !lines[index].trim().is_empty() {
-            if !text.is_empty() {
-                text.push('\n');
-            }
-            text.push_str(&lines[index]);
-            index += 1;
-        }
-
-        // Create and add subtitle
-        subtitle_count += 1;
-        let id = if cue_id.is_empty() {
-            subtitle_count.to_string()
-        } else {
-            cue_id
-        };
-
-        let subtitle = Subtitle::new(start_time, end_time, text).with_id(id);
-        track.add_subtitle(subtitle);
-
-        // Skip any empty lines
-        while index < lines.len() && lines[index].trim().is_empty() {
-            index += 1;
-        }
-    }
-
-    track.sort();
-    Ok(track)
-}
-
-/// Parses SRT format subtitle content.
+/// Parses `SRT` format subtitle content.
 ///
 /// # Errors
 ///
@@ -360,10 +188,11 @@ fn parse_srt(content: &str) -> Result<SubtitleTrack> {
         track.add_subtitle(subtitle);
     }
 
+    track.sort();
     Ok(track)
 }
 
-/// Parses an individual SRT entry.
+/// Parses an individual `SRT` entry.
 ///
 /// # Errors
 ///
@@ -463,6 +292,125 @@ fn parse_time(time_str: &str) -> Result<TimePosition> {
     Ok(TimePosition::new(hours, minutes, seconds, milliseconds))
 }
 
+/// Parses a `WebVTT` subtitle file.
+///
+/// # Arguments
+///
+/// * `path` - Path to the `WebVTT` file
+///
+/// # Returns
+///
+/// * `Result<SubtitleTrack>` - A subtitle track containing the parsed subtitles
+///
+/// # Errors
+///
+/// Returns an error if:
+/// * The file cannot be read
+/// * The file content is invalid `WebVTT` format
+pub fn parse_webvtt_file<P: AsRef<Path>>(path: P) -> Result<SubtitleTrack> {
+    let file = File::open(path.as_ref())?;
+    let reader = BufReader::new(file);
+    let lines: Vec<String> = reader.lines().collect::<io::Result<Vec<String>>>()?;
+
+    let mut track = SubtitleTrack::new();
+    let mut index = 0;
+
+    // Check for WebVTT header
+    if lines.is_empty() || !lines[0].trim().starts_with("WEBVTT") {
+        return Err(Error::invalid_subtitle_format("Missing `WebVTT` header"));
+    }
+    index += 1;
+
+    // Skip header until we find an empty line
+    while index < lines.len() && !lines[index].trim().is_empty() {
+        index += 1;
+    }
+
+    // Skip any empty lines
+    while index < lines.len() && lines[index].trim().is_empty() {
+        index += 1;
+    }
+
+    let mut subtitle_count = 0;
+    while index < lines.len() {
+        // Skip empty lines and comments
+        if lines[index].trim().is_empty() || lines[index].trim().starts_with("NOTE ") {
+            index += 1;
+            continue;
+        }
+
+        // Check if this line is a cue identifier or a timestamp
+        let mut cue_id = String::new();
+        let timestamp_line;
+
+        if index + 1 < lines.len() && lines[index + 1].contains("-->") {
+            // This line is a cue identifier
+            cue_id = lines[index].trim().to_string();
+            index += 1;
+            timestamp_line = &lines[index];
+        } else if lines[index].contains("-->") {
+            // This line is already a timestamp
+            timestamp_line = &lines[index];
+        } else {
+            // Invalid format
+            return Err(Error::invalid_subtitle_format("Expected timestamp line"));
+        }
+
+        // Parse timestamps
+        let times: Vec<&str> = timestamp_line.split("-->").collect();
+        let times_len = times.len();
+        if times_len != 2 {
+            return Err(Error::invalid_subtitle_format("Invalid time format"));
+        }
+
+        let (time_part, settings_part) = match times[1].find(' ') {
+            Some(pos) => times[1].split_at(pos),
+            None => (times[1], ""),
+        };
+
+        let start_time = TimePosition::from_vtt_string(times[0].trim())?;
+        let end_time = TimePosition::from_vtt_string(time_part.trim())?;
+
+        // TODO: Parse cue settings from settings_part
+        let _settings = settings_part.trim();
+
+        index += 1;
+
+        // Parse text content (until empty line or end of file)
+        if index >= lines.len() {
+            return Err(Error::invalid_subtitle_format("Unexpected end of file"));
+        }
+
+        let mut text = String::new();
+        while index < lines.len() && !lines[index].trim().is_empty() {
+            if !text.is_empty() {
+                text.push('\n');
+            }
+            text.push_str(&lines[index]);
+            index += 1;
+        }
+
+        // Create and add subtitle
+        subtitle_count += 1;
+        let id = if cue_id.is_empty() {
+            subtitle_count.to_string()
+        } else {
+            cue_id
+        };
+
+        let subtitle = Subtitle::new(start_time, end_time, text).with_id(id);
+        track.add_subtitle(subtitle);
+
+        // Skip any empty lines
+        while index < lines.len() && lines[index].trim().is_empty() {
+            index += 1;
+        }
+    }
+
+    track.sort();
+    Ok(track)
+}
+
 /// Parses `WebVTT` format subtitle content.
 ///
 /// # Errors
@@ -482,7 +430,7 @@ fn parse_vtt(content: &str) -> Result<SubtitleTrack> {
     }
 
     if !header_found {
-        return Err(Error::parse_error_with_reason("Missing WEBVTT header"));
+        return Err(Error::parse_error_with_reason("Missing `WEBVTT` header"));
     }
 
     // Process the rest of the file
