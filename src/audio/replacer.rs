@@ -250,7 +250,7 @@ where
     }
 
     // Apply volume adjustment to replacement audio if needed
-    if options.volume != 1.0 {
+    if (options.volume - 1.0).abs() > f64::EPSILON {
         let volume = options.volume;
         filter.push_str(&format!("volume={volume}"));
     }
@@ -259,7 +259,7 @@ where
     filter.push_str("[adjusted_audio];");
 
     // If we want to mix in the original audio
-    if options.original_volume > 0.0 {
+    if options.original_volume > f64::EPSILON {
         filter.push_str("[0:a]");
         let original_volume = options.original_volume;
         filter.push_str(&format!("volume={original_volume}"));
@@ -424,7 +424,7 @@ where
         ));
 
         // Apply volume adjustment if needed
-        if options.volume != 1.0 {
+        if (options.volume - 1.0).abs() > f64::EPSILON {
             let volume = options.volume;
             filter.push_str(&format!(",volume={volume}"));
         }
