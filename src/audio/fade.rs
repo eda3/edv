@@ -201,7 +201,7 @@ where
     }
 
     // Get the duration of the input file
-    let file_duration = get_duration(ffmpeg, input.as_ref())?;
+    let file_duration = get_duration(ffmpeg, input.as_ref());
 
     let start_time = file_duration - duration;
     if start_time < 0.0 {
@@ -276,7 +276,7 @@ where
     }
 
     // Get the duration of the input file
-    let file_duration = get_duration(ffmpeg, input.as_ref())?;
+    let file_duration = get_duration(ffmpeg, input.as_ref());
 
     let fade_out_start = file_duration - fade_out_duration;
     if fade_out_start <= fade_in_duration {
@@ -442,7 +442,8 @@ where
 }
 
 /// Helper function to get the duration of a media file.
-fn get_duration<P>(_ffmpeg: &FFmpeg, _file: P) -> Result<f64>
+#[allow(clippy::unused_self)]
+fn get_duration<P>(_ffmpeg: &FFmpeg, _file: P) -> f64
 where
     P: AsRef<Path>,
 {
@@ -452,8 +453,8 @@ where
     // 3. Return the duration in seconds
 
     // For now, we'll return a dummy value
-    // In a real implementation, you would remove this and implement proper duration detection
-    Ok(60.0)
+    // In a real implementation, you would use Result<f64> and proper error handling
+    60.0
 }
 
 #[cfg(test)]
