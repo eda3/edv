@@ -137,16 +137,15 @@ impl<'a> FFmpegCommand<'a> {
 
     /// Executes the `FFmpeg` command.
     ///
-    /// # Returns
-    ///
-    /// A Result indicating success or an error
-    ///
-    /// # Errors
-    ///
     /// Returns an error if:
     /// * No output file is specified
     /// * No input files are specified
     /// * The `FFmpeg` process fails to start or returns a non-zero exit code
+    ///
+    /// # Panics
+    ///
+    /// This function should not panic as it performs explicit checks before using `unwrap()`.
+    /// If `self.output` is `None`, it returns an error before attempting to unwrap.
     pub fn execute(&self) -> Result<()> {
         // Check that we have inputs and an output
         if self.inputs.is_empty() {
