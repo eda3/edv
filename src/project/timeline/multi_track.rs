@@ -382,36 +382,123 @@ impl MultiTrackManager {
     // Helper method to synchronize locked tracks
     fn synchronize_locked_tracks(
         &self,
-        _source_id: TrackId,
-        _target_id: TrackId,
-        _timeline: &mut Timeline,
+        source_id: TrackId,
+        target_id: TrackId,
+        timeline: &mut Timeline,
     ) -> Result<()> {
-        // Implementation for synchronizing locked tracks
-        // This is a placeholder - actual implementation would depend on specific requirements
+        // Get source track information first
+        let (is_locked, is_muted, kind) = {
+            let source_track = timeline.get_track(source_id)
+                .ok_or(MultiTrackError::TrackNotFound(source_id))?;
+            
+            (source_track.is_locked(), source_track.is_muted(), source_track.kind())
+        };
+        
+        // Now get target track after releasing source track borrow
+        let target_track_mut = timeline.get_track_mut(target_id)
+            .ok_or(MultiTrackError::TrackNotFound(target_id))?;
+        
+        // If source track is locked, target track should reflect the same locked state
+        if is_locked != target_track_mut.is_locked() {
+            target_track_mut.set_locked(is_locked);
+        }
+        
+        // Synchronize mute state for audio tracks
+        if kind == TrackKind::Audio && target_track_mut.kind() == TrackKind::Audio {
+            if is_muted != target_track_mut.is_muted() {
+                target_track_mut.set_muted(is_muted);
+            }
+        }
+        
         Ok(())
     }
 
     // Helper method to update timing-dependent tracks
     fn update_timing_dependent_track(
         &self,
-        _source_id: TrackId,
-        _target_id: TrackId,
-        _timeline: &mut Timeline,
+        source_id: TrackId,
+        target_id: TrackId,
+        timeline: &mut Timeline,
     ) -> Result<()> {
-        // Implementation for updating timing-dependent tracks
-        // This is a placeholder - actual implementation would depend on specific requirements
+        // Get source track information first, then release the borrow
+        let source_clips = {
+            let source_track = timeline.get_track(source_id)
+                .ok_or(MultiTrackError::TrackNotFound(source_id))?;
+            
+            // Clone the clips to avoid borrowing issues
+            source_track.get_clips().to_vec()
+        };
+        
+        if source_clips.is_empty() {
+            // If source has no clips, we can't derive timing
+            return Ok(());
+        }
+        
+        // Now get target track after releasing source track borrow
+        let target_track_mut = timeline.get_track_mut(target_id)
+            .ok_or(MultiTrackError::TrackNotFound(target_id))?;
+        
+        // Find corresponding clips in the target track and adjust their timing
+        // This is a simplified implementation - real implementation would be more complex
+        // based on specific project requirements
+        for target_clip in target_track_mut.get_clips_mut() {
+            // Find a source clip that might correspond to this target clip
+            // In a real implementation, we might need a more sophisticated matching algorithm
+            // or explicit clip relationship tracking
+            if let Some(source_clip) = source_clips.iter().find(|&c| 
+                // For example, matching clips that start around the same time
+                (c.position() - target_clip.position()).as_seconds().abs() < 1.0
+            ) {
+                // Adjust target clip timing based on source clip
+                let offset_seconds = source_clip.position().as_seconds() - target_clip.position().as_seconds();
+                if offset_seconds != 0.0 {
+                    target_clip.set_position(source_clip.position());
+                }
+                
+                // Optionally adjust duration as well
+                if source_clip.duration().as_seconds() != target_clip.duration().as_seconds() {
+                    target_clip.set_duration(source_clip.duration());
+                }
+            }
+        }
+        
         Ok(())
     }
 
     // Helper method to update visibility-dependent tracks
     fn update_visibility_dependent_track(
         &self,
-        _source_id: TrackId,
-        _target_id: TrackId,
-        _timeline: &mut Timeline,
+        source_id: TrackId,
+        target_id: TrackId,
+        timeline: &mut Timeline,
     ) -> Result<()> {
-        // Implementation for updating visibility-dependent tracks
-        // This is a placeholder - actual implementation would depend on specific requirements
+        // Get source track information first
+        let (is_muted, kind) = {
+            let source_track = timeline.get_track(source_id)
+                .ok_or(MultiTrackError::TrackNotFound(source_id))?;
+            
+            (source_track.is_muted(), source_track.kind())
+        };
+        
+        // Now get target track after releasing source track borrow
+        let target_track_mut = timeline.get_track_mut(target_id)
+            .ok_or(MultiTrackError::TrackNotFound(target_id))?;
+        
+        // In a visibility dependency, if source track is muted/hidden,
+        // target track should reflect that state
+        
+        // For video tracks, visibility typically maps to track enabled state
+        if kind == TrackKind::Video && target_track_mut.kind() == TrackKind::Video {
+            // If source is muted, target should be hidden
+            target_track_mut.set_muted(is_muted);
+        }
+        
+        // For audio tracks, visibility typically maps to mute state
+        if kind == TrackKind::Audio {
+            // If source is muted, target should be muted
+            target_track_mut.set_muted(is_muted);
+        }
+        
         Ok(())
     }
 
@@ -424,11 +511,24 @@ impl MultiTrackManager {
     /// * `timeline` - The timeline containing the tracks
     pub fn propagate_visibility_changes(
         &self,
-        _source_id: TrackId,
-        _target_id: TrackId,
-        _timeline: &mut Timeline,
+        source_id: TrackId,
+        target_id: TrackId,
+        timeline: &mut Timeline,
     ) {
-        // Implementation to be added
+        // Get relationship type
+        if let Some(relationship) = self.get_relationship(source_id, target_id) {
+            match relationship {
+                TrackRelationship::VisibilityDependent => {
+                    // For visibility-dependent tracks, update visibility state
+                    let _ = self.update_visibility_dependent_track(source_id, target_id, timeline);
+                },
+                TrackRelationship::Locked => {
+                    // For locked tracks, synchronize all states
+                    let _ = self.synchronize_locked_tracks(source_id, target_id, timeline);
+                },
+                _ => {}  // Other relationship types don't affect visibility
+            }
+        }
     }
 
     /// Propagates timing changes from source to target
@@ -440,11 +540,24 @@ impl MultiTrackManager {
     /// * `timeline` - The timeline containing the tracks
     pub fn propagate_timing_changes(
         &self,
-        _source_id: TrackId,
-        _target_id: TrackId,
-        _timeline: &mut Timeline,
+        source_id: TrackId,
+        target_id: TrackId,
+        timeline: &mut Timeline,
     ) {
-        // Implementation to be added
+        // Get relationship type
+        if let Some(relationship) = self.get_relationship(source_id, target_id) {
+            match relationship {
+                TrackRelationship::TimingDependent => {
+                    // For timing-dependent tracks, update clip timings
+                    let _ = self.update_timing_dependent_track(source_id, target_id, timeline);
+                },
+                TrackRelationship::Locked => {
+                    // For locked tracks, synchronize all states including timing
+                    let _ = self.update_timing_dependent_track(source_id, target_id, timeline);
+                },
+                _ => {}  // Other relationship types don't affect timing
+            }
+        }
     }
 
     /// Propagates edit operations from source to target
@@ -456,11 +569,32 @@ impl MultiTrackManager {
     /// * `timeline` - The timeline containing the tracks
     pub fn propagate_edits(
         &self,
-        _source_id: TrackId,
-        _target_id: TrackId,
-        _timeline: &mut Timeline,
+        source_id: TrackId,
+        target_id: TrackId,
+        timeline: &mut Timeline,
     ) {
-        // Implementation to be added
+        // Get relationship type
+        if let Some(relationship) = self.get_relationship(source_id, target_id) {
+            match relationship {
+                TrackRelationship::Locked => {
+                    // For locked tracks, propagate all changes
+                    let _ = self.synchronize_locked_tracks(source_id, target_id, timeline);
+                    let _ = self.update_timing_dependent_track(source_id, target_id, timeline);
+                    let _ = self.update_visibility_dependent_track(source_id, target_id, timeline);
+                },
+                TrackRelationship::TimingDependent => {
+                    // For timing-dependent, only update timing
+                    let _ = self.update_timing_dependent_track(source_id, target_id, timeline);
+                },
+                TrackRelationship::VisibilityDependent => {
+                    // For visibility-dependent, only update visibility
+                    let _ = self.update_visibility_dependent_track(source_id, target_id, timeline);
+                },
+                TrackRelationship::Independent => {
+                    // No propagation for independent tracks
+                }
+            }
+        }
     }
 }
 

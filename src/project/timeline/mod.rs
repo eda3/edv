@@ -308,6 +308,11 @@ impl Track {
         &self.clips
     }
 
+    /// Gets mutable references to all clips in the track.
+    pub fn get_clips_mut(&mut self) -> &mut [Clip] {
+        &mut self.clips
+    }
+
     /// Gets a mutable reference to a clip by its ID.
     pub fn get_clip_mut(&mut self, clip_id: crate::project::ClipId) -> Option<&mut Clip> {
         self.clips.iter_mut().find(|clip| clip.id() == clip_id)
@@ -553,17 +558,551 @@ impl Timeline {
             return Duration::zero();
         }
 
-        // Find the track that ends last
+        // Find the track with the longest duration
         self.tracks
             .iter()
             .map(|track| track.duration())
             .max()
             .unwrap_or_else(Duration::zero)
     }
+
+    /// Splits a clip at the specified position.
+    ///
+    /// # Arguments
+    ///
+    /// * `track_id` - The ID of the track containing the clip
+    /// * `clip_id` - The ID of the clip to split
+    /// * `position` - The position at which to split the clip
+    ///
+    /// # Returns
+    ///
+    /// The ID of the new clip created from the split, or an error if the operation failed.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if:
+    /// * The track or clip is not found
+    /// * The position is outside the clip
+    /// * The clip cannot be split for some other reason
+    pub fn split_clip(
+        &mut self,
+        track_id: TrackId,
+        clip_id: crate::project::ClipId,
+        position: TimePosition,
+    ) -> Result<crate::project::ClipId> {
+        // Get the track
+        let track = self
+            .get_track_mut(track_id)
+            .ok_or(TimelineError::TrackNotFound(track_id))?;
+
+        // Find the clip
+        let clip_index = track.clips.iter().position(|c| c.id() == clip_id).ok_or(
+            TimelineError::ClipNotFound {
+                track: track_id,
+                clip: clip_id,
+            },
+        )?;
+
+        // Check if position is within the clip
+        let position_check = {
+            let clip = &track.clips[clip_index];
+            if position <= clip.position() || position >= clip.end_position() {
+                return Err(TimelineError::InvalidOperation(format!(
+                    "Split position {position} is outside clip bounds"
+                )));
+            }
+
+            // Calculate durations and offsets
+            let split_offset = position - clip.position();
+
+            // First part duration = split_offset
+            let first_part_duration = Duration::from_seconds(split_offset.as_seconds());
+
+            // Second part duration = original duration - first part duration
+            let second_part_duration = clip.duration() - first_part_duration;
+
+            // Calculate source positions
+            let source_offset_ratio =
+                first_part_duration.as_seconds() / clip.duration().as_seconds();
+            let source_split_point = clip.source_start()
+                + Duration::from_seconds(
+                    (clip.source_end().as_seconds() - clip.source_start().as_seconds())
+                        * source_offset_ratio,
+                );
+
+            (
+                first_part_duration,
+                second_part_duration,
+                source_split_point,
+                clip.asset_id(),
+                clip.source_start(),
+                clip.source_end(),
+            )
+        };
+
+        // Destructure the tuple
+        let (
+            first_part_duration,
+            second_part_duration,
+            source_split_point,
+            asset_id,
+            _source_start,
+            source_end,
+        ) = position_check;
+
+        // Create the second (new) clip
+        let new_clip_id = crate::project::ClipId::new();
+        let new_clip = Clip::new(
+            new_clip_id,
+            asset_id,
+            position,
+            second_part_duration,
+            source_split_point,
+            source_end,
+        );
+
+        // Modify the original clip (first part)
+        let clip = &mut track.clips[clip_index];
+        clip.set_duration(first_part_duration);
+        clip.set_source_end(source_split_point);
+
+        // Add the new clip
+        track.clips.push(new_clip);
+
+        // Re-sort clips by position
+        track
+            .clips
+            .sort_by(|a, b| a.position().partial_cmp(&b.position()).unwrap());
+
+        Ok(new_clip_id)
+    }
+
+    /// Merges two adjacent clips.
+    ///
+    /// # Arguments
+    ///
+    /// * `track_id` - The ID of the track containing the clips
+    /// * `first_clip_id` - The ID of the first clip
+    /// * `second_clip_id` - The ID of the second clip
+    ///
+    /// # Returns
+    ///
+    /// `Ok(())` if the clips were merged successfully, or an error if the operation failed.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if:
+    /// * The track or either clip is not found
+    /// * The clips are not adjacent
+    /// * The clips use different assets
+    /// * The clips cannot be merged for some other reason
+    pub fn merge_clips(
+        &mut self,
+        track_id: TrackId,
+        first_clip_id: crate::project::ClipId,
+        second_clip_id: crate::project::ClipId,
+    ) -> Result<()> {
+        // Get the track
+        let track = self
+            .get_track_mut(track_id)
+            .ok_or(TimelineError::TrackNotFound(track_id))?;
+
+        // Find both clips
+        let first_clip_index = track
+            .clips
+            .iter()
+            .position(|c| c.id() == first_clip_id)
+            .ok_or(TimelineError::ClipNotFound {
+                track: track_id,
+                clip: first_clip_id,
+            })?;
+
+        let second_clip_index = track
+            .clips
+            .iter()
+            .position(|c| c.id() == second_clip_id)
+            .ok_or(TimelineError::ClipNotFound {
+                track: track_id,
+                clip: second_clip_id,
+            })?;
+
+        // Ensure correct order (first clip should come before second clip)
+        let (first_idx, second_idx) = if track.clips[first_clip_index].position()
+            < track.clips[second_clip_index].position()
+        {
+            (first_clip_index, second_clip_index)
+        } else {
+            (second_clip_index, first_clip_index)
+        };
+
+        // Check if clips are adjacent and using the same asset
+        // Store information needed for merging
+        let merge_info = {
+            let first_clip = &track.clips[first_idx];
+            let second_clip = &track.clips[second_idx];
+
+            if first_clip.end_position() != second_clip.position() {
+                return Err(TimelineError::InvalidOperation(
+                    "Clips are not adjacent".to_string(),
+                ));
+            }
+
+            // Check if clips use the same asset
+            if first_clip.asset_id() != second_clip.asset_id() {
+                return Err(TimelineError::InvalidOperation(
+                    "Cannot merge clips from different assets".to_string(),
+                ));
+            }
+
+            // Calculate merged duration and collect source end from second clip
+            (
+                first_clip.duration() + second_clip.duration(),
+                second_clip.source_end(),
+            )
+        };
+
+        // Destructure the tuple of results from above
+        let (merged_duration, second_source_end) = merge_info;
+
+        // Update the first clip to span the combined duration
+        let first_clip = &mut track.clips[first_idx];
+        first_clip.set_duration(merged_duration);
+        first_clip.set_source_end(second_source_end);
+
+        // Remove the second clip
+        // Note: If second_idx < first_idx, the removal would affect first_idx
+        // But we ensured earlier that first_idx < second_idx
+        track.clips.remove(second_idx);
+
+        Ok(())
+    }
+
+    /// Moves a clip from one track to another.
+    ///
+    /// # Arguments
+    ///
+    /// * `source_track_id` - The ID of the track containing the clip
+    /// * `target_track_id` - The ID of the track to move the clip to
+    /// * `clip_id` - The ID of the clip to move
+    /// * `new_position` - Optional new position for the clip (if None, keeps the original position)
+    ///
+    /// # Returns
+    ///
+    /// `Ok(())` if the clip was moved successfully, or an error if the operation failed.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if:
+    /// * The source track, target track, or clip is not found
+    /// * The target track is of a different kind than the source track
+    /// * Moving the clip would cause an overlap in the target track
+    /// * The clip cannot be moved for some other reason
+    pub fn move_clip_to_track(
+        &mut self,
+        source_track_id: TrackId,
+        target_track_id: TrackId,
+        clip_id: crate::project::ClipId,
+        new_position: Option<TimePosition>,
+    ) -> Result<()> {
+        // Check if source and target tracks exist
+        if !self.has_track(source_track_id) {
+            return Err(TimelineError::TrackNotFound(source_track_id));
+        }
+
+        if !self.has_track(target_track_id) {
+            return Err(TimelineError::TrackNotFound(target_track_id));
+        }
+
+        // Check if tracks are of the same kind
+        let source_kind = self.get_track(source_track_id).unwrap().kind();
+        let target_kind = self.get_track(target_track_id).unwrap().kind();
+
+        if source_kind != target_kind {
+            return Err(TimelineError::InvalidOperation(format!(
+                "Cannot move clip between different track kinds: {source_kind} and {target_kind}"
+            )));
+        }
+
+        // Find and remove clip from source track
+        let source_track = self.get_track_mut(source_track_id).unwrap();
+        let clip_index = source_track
+            .clips
+            .iter()
+            .position(|c| c.id() == clip_id)
+            .ok_or(TimelineError::ClipNotFound {
+                track: source_track_id,
+                clip: clip_id,
+            })?;
+
+        // Get position before removing and clone the clip
+        let _original_position = source_track.clips[clip_index].position();
+        let mut clip = source_track.clips[clip_index].clone();
+        source_track.clips.remove(clip_index);
+
+        // Update position if requested
+        if let Some(position) = new_position {
+            clip.set_position(position);
+        }
+
+        // Get the final position for error reporting
+        let final_position = clip.position();
+
+        // Add clip to target track
+        let target_track = self.get_track_mut(target_track_id).unwrap();
+
+        // Check for overlap in target track
+        let has_overlap = target_track.get_clips().iter().any(|c| {
+            c.id() != clip.id()
+                && c.position() < clip.position() + clip.duration()
+                && c.position() + c.duration() > clip.position()
+        });
+
+        if has_overlap {
+            // Restore clip to source track
+            self.get_track_mut(source_track_id)
+                .unwrap()
+                .clips
+                .push(clip);
+            return Err(TimelineError::ClipOverlap {
+                position: final_position,
+            });
+        }
+
+        // Add clip to target track
+        target_track.clips.push(clip);
+        target_track
+            .clips
+            .sort_by(|a, b| a.position().partial_cmp(&b.position()).unwrap());
+
+        Ok(())
+    }
 }
 
 impl Default for Timeline {
     fn default() -> Self {
         Self::new()
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::project::{AssetId, ClipId};
+    use crate::utility::time::{Duration, TimePosition};
+
+    #[test]
+    fn test_add_track() {
+        let mut timeline = Timeline::new();
+        let track_id = timeline.add_track(TrackKind::Video);
+
+        assert!(timeline.has_track(track_id));
+        assert_eq!(timeline.get_tracks().len(), 1);
+
+        let track = timeline.get_track(track_id).unwrap();
+        assert_eq!(track.kind(), TrackKind::Video);
+    }
+
+    #[test]
+    fn test_add_clip() {
+        let mut timeline = Timeline::new();
+        let track_id = timeline.add_track(TrackKind::Video);
+
+        let asset_id = AssetId::new();
+        let clip_id = ClipId::new();
+        let clip = Clip::new(
+            clip_id,
+            asset_id,
+            TimePosition::from_seconds(10.0),
+            Duration::from_seconds(5.0),
+            TimePosition::from_seconds(0.0),
+            TimePosition::from_seconds(5.0),
+        );
+
+        let result = timeline.add_clip(track_id, clip);
+        assert!(result.is_ok());
+
+        let track = timeline.get_track(track_id).unwrap();
+        assert_eq!(track.get_clips().len(), 1);
+
+        let clip = track.get_clip(clip_id).unwrap();
+        assert_eq!(clip.position(), TimePosition::from_seconds(10.0));
+        assert_eq!(clip.duration(), Duration::from_seconds(5.0));
+    }
+
+    #[test]
+    fn test_clip_overlap() {
+        let mut timeline = Timeline::new();
+        let track_id = timeline.add_track(TrackKind::Video);
+
+        // Add first clip at position 10.0 with duration 5.0
+        let asset_id = AssetId::new();
+        let clip1 = Clip::new(
+            ClipId::new(),
+            asset_id,
+            TimePosition::from_seconds(10.0),
+            Duration::from_seconds(5.0),
+            TimePosition::from_seconds(0.0),
+            TimePosition::from_seconds(5.0),
+        );
+
+        let result = timeline.add_clip(track_id, clip1);
+        assert!(result.is_ok());
+
+        // Try to add overlapping clip at position 12.0
+        let clip2 = Clip::new(
+            ClipId::new(),
+            asset_id,
+            TimePosition::from_seconds(12.0),
+            Duration::from_seconds(5.0),
+            TimePosition::from_seconds(0.0),
+            TimePosition::from_seconds(5.0),
+        );
+
+        let result = timeline.add_clip(track_id, clip2);
+        assert!(result.is_err());
+
+        // Add non-overlapping clip
+        let clip3 = Clip::new(
+            ClipId::new(),
+            asset_id,
+            TimePosition::from_seconds(20.0),
+            Duration::from_seconds(5.0),
+            TimePosition::from_seconds(0.0),
+            TimePosition::from_seconds(5.0),
+        );
+
+        let result = timeline.add_clip(track_id, clip3);
+        assert!(result.is_ok());
+
+        // Verify two clips are in the track
+        let track = timeline.get_track(track_id).unwrap();
+        assert_eq!(track.get_clips().len(), 2);
+    }
+
+    #[test]
+    fn test_split_clip() {
+        let mut timeline = Timeline::new();
+        let track_id = timeline.add_track(TrackKind::Video);
+
+        // Add a clip at position 10.0 with duration 10.0
+        let asset_id = AssetId::new();
+        let clip_id = ClipId::new();
+        let clip = Clip::new(
+            clip_id,
+            asset_id,
+            TimePosition::from_seconds(10.0),
+            Duration::from_seconds(10.0),
+            TimePosition::from_seconds(0.0),
+            TimePosition::from_seconds(10.0),
+        );
+
+        let result = timeline.add_clip(track_id, clip);
+        assert!(result.is_ok());
+
+        // Split the clip at position 15.0
+        let result = timeline.split_clip(track_id, clip_id, TimePosition::from_seconds(15.0));
+
+        assert!(result.is_ok());
+        let new_clip_id = result.unwrap();
+
+        // Verify the split
+        let track = timeline.get_track(track_id).unwrap();
+        assert_eq!(track.get_clips().len(), 2);
+
+        // Check original clip
+        let original_clip = track.get_clip(clip_id).unwrap();
+        assert_eq!(original_clip.position(), TimePosition::from_seconds(10.0));
+        assert_eq!(original_clip.duration(), Duration::from_seconds(5.0));
+        assert_eq!(original_clip.source_end(), TimePosition::from_seconds(5.0));
+
+        // Check new clip
+        let new_clip = track.get_clip(new_clip_id).unwrap();
+        assert_eq!(new_clip.position(), TimePosition::from_seconds(15.0));
+        assert_eq!(new_clip.duration(), Duration::from_seconds(5.0));
+        assert_eq!(new_clip.source_start(), TimePosition::from_seconds(5.0));
+        assert_eq!(new_clip.source_end(), TimePosition::from_seconds(10.0));
+    }
+
+    #[test]
+    fn test_merge_clips() {
+        let mut timeline = Timeline::new();
+        let track_id = timeline.add_track(TrackKind::Video);
+
+        // Add two adjacent clips
+        let asset_id = AssetId::new();
+        let clip1_id = ClipId::new();
+        let clip1 = Clip::new(
+            clip1_id,
+            asset_id,
+            TimePosition::from_seconds(10.0),
+            Duration::from_seconds(5.0),
+            TimePosition::from_seconds(0.0),
+            TimePosition::from_seconds(5.0),
+        );
+
+        let clip2_id = ClipId::new();
+        let clip2 = Clip::new(
+            clip2_id,
+            asset_id,
+            TimePosition::from_seconds(15.0),
+            Duration::from_seconds(5.0),
+            TimePosition::from_seconds(5.0),
+            TimePosition::from_seconds(10.0),
+        );
+
+        timeline.add_clip(track_id, clip1).unwrap();
+        timeline.add_clip(track_id, clip2).unwrap();
+
+        // Merge the clips
+        let result = timeline.merge_clips(track_id, clip1_id, clip2_id);
+        assert!(result.is_ok());
+
+        // Verify the merge
+        let track = timeline.get_track(track_id).unwrap();
+        assert_eq!(track.get_clips().len(), 1);
+
+        // Check merged clip
+        let merged_clip = track.get_clip(clip1_id).unwrap();
+        assert_eq!(merged_clip.position(), TimePosition::from_seconds(10.0));
+        assert_eq!(merged_clip.duration(), Duration::from_seconds(10.0));
+        assert_eq!(merged_clip.source_start(), TimePosition::from_seconds(0.0));
+        assert_eq!(merged_clip.source_end(), TimePosition::from_seconds(10.0));
+    }
+
+    #[test]
+    fn test_move_clip_to_track() {
+        let mut timeline = Timeline::new();
+        let track1_id = timeline.add_track(TrackKind::Video);
+        let track2_id = timeline.add_track(TrackKind::Video);
+
+        // Add a clip to track1
+        let asset_id = AssetId::new();
+        let clip_id = ClipId::new();
+        let clip = Clip::new(
+            clip_id,
+            asset_id,
+            TimePosition::from_seconds(10.0),
+            Duration::from_seconds(5.0),
+            TimePosition::from_seconds(0.0),
+            TimePosition::from_seconds(5.0),
+        );
+
+        timeline.add_clip(track1_id, clip).unwrap();
+
+        // Move clip to track2
+        let result = timeline.move_clip_to_track(track1_id, track2_id, clip_id, None);
+
+        assert!(result.is_ok());
+
+        // Verify the move
+        let track1 = timeline.get_track(track1_id).unwrap();
+        assert_eq!(track1.get_clips().len(), 0);
+
+        let track2 = timeline.get_track(track2_id).unwrap();
+        assert_eq!(track2.get_clips().len(), 1);
+
+        // Check clip in new track
+        let moved_clip = track2.get_clip(clip_id).unwrap();
+        assert_eq!(moved_clip.position(), TimePosition::from_seconds(10.0));
     }
 }
