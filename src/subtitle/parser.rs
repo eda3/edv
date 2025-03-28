@@ -24,7 +24,7 @@ pub fn parse_subtitle_file<P: AsRef<Path>>(
 ) -> Result<SubtitleTrack> {
     let path_buf = path.as_ref().to_path_buf();
     let content = fs::read_to_string(&path)
-        .map_err(|e| Error::parse_error(path_buf, format!("Failed to read file: {}", e)))?;
+        .map_err(|e| Error::parse_error(path_buf, format!("Failed to read file: {e}")))?;
 
     if let Some(format) = format {
         match format {
@@ -36,13 +36,10 @@ pub fn parse_subtitle_file<P: AsRef<Path>>(
         }
     } else {
         // Try to detect format from content
-        let format = match SubtitleFormat::detect_from_content(&content) {
-            Ok(fmt) => fmt,
-            Err(_) => {
-                return Err(Error::parse_error_with_reason(
-                    "Could not determine subtitle format from content",
-                ));
-            }
+        let Ok(format) = SubtitleFormat::detect_from_content(&content) else {
+            return Err(Error::parse_error_with_reason(
+                "Could not determine subtitle format from content",
+            ));
         };
 
         match format {
@@ -118,7 +115,7 @@ fn detect_format_from_content<P: AsRef<Path>>(path: P) -> Result<SubtitleFormat>
     Err(Error::unknown_subtitle_format())
 }
 
-/// Parses an SRT (SubRip) subtitle file.
+/// Parses an SRT (`SubRip`) subtitle file.
 ///
 /// # Arguments
 ///
@@ -149,9 +146,8 @@ pub fn parse_srt_file<P: AsRef<Path>>(path: P) -> Result<SubtitleTrack> {
         }
 
         // Parse subtitle number
-        let subtitle_number = match lines[index].trim().parse::<usize>() {
-            Ok(num) => num,
-            Err(_) => return Err(Error::invalid_subtitle_format("Expected subtitle number")),
+        let Ok(subtitle_number) = lines[index].trim().parse::<usize>() else {
+            return Err(Error::invalid_subtitle_format("Expected subtitle number"));
         };
         index += 1;
 
@@ -199,11 +195,11 @@ pub fn parse_srt_file<P: AsRef<Path>>(path: P) -> Result<SubtitleTrack> {
     Ok(track)
 }
 
-/// Parses a WebVTT subtitle file.
+/// Parses a `WebVTT` subtitle file.
 ///
 /// # Arguments
 ///
-/// * `path` - Path to the WebVTT file
+/// * `path` - Path to the `WebVTT` file
 ///
 /// # Returns
 ///
@@ -213,7 +209,7 @@ pub fn parse_srt_file<P: AsRef<Path>>(path: P) -> Result<SubtitleTrack> {
 ///
 /// Returns an error if:
 /// * The file cannot be read
-/// * The file content is invalid WebVTT format
+/// * The file content is invalid `WebVTT` format
 pub fn parse_webvtt_file<P: AsRef<Path>>(path: P) -> Result<SubtitleTrack> {
     let file = File::open(path.as_ref())?;
     let reader = BufReader::new(file);
@@ -377,8 +373,7 @@ fn parse_srt_entry(id: &str, timing: &str, text: &str) -> Result<Subtitle> {
     let times: Vec<&str> = timing.split(" --> ").collect();
     if times.len() != 2 {
         return Err(Error::parse_error_with_reason(format!(
-            "Invalid timing format: {}",
-            timing
+            "Invalid timing format: {timing}"
         )));
     }
 
@@ -397,7 +392,7 @@ fn parse_srt_entry(id: &str, timing: &str, text: &str) -> Result<Subtitle> {
 ///
 /// # Returns
 ///
-/// A Result containing the parsed TimePosition or an error
+/// A Result containing the parsed `TimePosition` or an error
 ///
 /// # Errors
 ///
@@ -408,17 +403,16 @@ fn parse_time(time_str: &str) -> Result<TimePosition> {
     let parts: Vec<&str> = time_with_dots.split(':').collect();
     if parts.len() != 3 {
         return Err(Error::parse_error_with_reason(format!(
-            "Invalid time format: {}",
-            time_str
+            "Invalid time format: {time_str}"
         )));
     }
 
-    let hours = parts[0].parse::<u32>().map_err(|_| {
-        Error::parse_error_with_reason(format!("Invalid hours in time format: {}", parts[0]))
+    let hours = parts[0].parse::<u32>().map_err(|e| {
+        Error::parse_error_with_reason(format!("Invalid hours in time format: {e}"))
     })?;
 
-    let minutes = parts[1].parse::<u32>().map_err(|_| {
-        Error::parse_error_with_reason(format!("Invalid minutes in time format: {}", parts[1]))
+    let minutes = parts[1].parse::<u32>().map_err(|e| {
+        Error::parse_error_with_reason(format!("Invalid minutes in time format: {e}"))
     })?;
 
     // 秒とミリ秒を分ける
@@ -445,35 +439,31 @@ fn parse_time(time_str: &str) -> Result<TimePosition> {
     })?;
 
     // Validate times
-    if hours >= 24 {
+    if hours > 99 {
         return Err(Error::parse_error_with_reason(format!(
-            "Hours out of range: {}",
-            hours
+            "Hours out of range: {hours}"
         )));
     }
-    if minutes >= 60 {
+    if minutes > 59 {
         return Err(Error::parse_error_with_reason(format!(
-            "Minutes out of range: {}",
-            minutes
+            "Minutes out of range: {minutes}"
         )));
     }
-    if seconds >= 60 {
+    if seconds > 59 {
         return Err(Error::parse_error_with_reason(format!(
-            "Seconds out of range: {}",
-            seconds
+            "Seconds out of range: {seconds}"
         )));
     }
-    if milliseconds >= 1000 {
+    if milliseconds > 999 {
         return Err(Error::parse_error_with_reason(format!(
-            "Milliseconds out of range: {}",
-            milliseconds
+            "Milliseconds out of range: {milliseconds}"
         )));
     }
 
     Ok(TimePosition::new(hours, minutes, seconds, milliseconds))
 }
 
-/// Parses WebVTT format subtitle content.
+/// Parses `WebVTT` format subtitle content.
 ///
 /// # Errors
 ///
@@ -546,7 +536,7 @@ fn parse_vtt(content: &str) -> Result<SubtitleTrack> {
     Ok(track)
 }
 
-/// Parses an individual WebVTT entry.
+/// Parses an individual `WebVTT` entry.
 ///
 /// # Errors
 ///
@@ -556,8 +546,7 @@ fn parse_vtt_entry(id: &str, timing: &str, text: &str) -> Result<Subtitle> {
     let times: Vec<&str> = timing.split(" --> ").collect();
     if times.len() != 2 {
         return Err(Error::parse_error_with_reason(format!(
-            "Invalid timing format: {}",
-            timing
+            "Invalid timing format: {timing}"
         )));
     }
 
@@ -572,7 +561,7 @@ fn parse_vtt_entry(id: &str, timing: &str, text: &str) -> Result<Subtitle> {
     Ok(Subtitle::new(start, end, text).with_id(id))
 }
 
-/// Parses a time string in WebVTT format (00:00:00.000).
+/// Parses a time string in `WebVTT` format (00:00:00.000).
 ///
 /// # Errors
 ///
@@ -632,8 +621,7 @@ fn parse_vtt_time(time_str: &str) -> Result<TimePosition> {
         Ok(TimePosition::new(0, minutes, seconds, milliseconds))
     } else {
         Err(Error::parse_error_with_reason(format!(
-            "Invalid time format: {}",
-            time_str
+            "Invalid time format: {time_str}"
         )))
     }
 }
@@ -647,7 +635,7 @@ fn parse_ssa(_content: &str) -> Result<SubtitleTrack> {
     Err(Error::unsupported_parser_format("ASS/SSA"))
 }
 
-/// Stub for parsing SubViewer format subtitles.
+/// Stub for parsing `SubViewer` format subtitles.
 ///
 /// # Errors
 ///

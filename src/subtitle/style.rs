@@ -2,7 +2,6 @@
 ///
 /// This module defines the data structures and functions for styling subtitles,
 /// including text formatting, colors, and positioning.
-
 use std::fmt;
 
 /// Horizontal alignment options for subtitle text.
@@ -98,31 +97,31 @@ impl FontStyle {
 pub struct TextStyle {
     /// Font family for the text
     pub font_family: String,
-    
+
     /// Font size in pixels
     pub font_size: u32,
-    
+
     /// Font color as #RRGGBB hex string
     pub color: String,
-    
+
     /// Background color as #RRGGBB hex string (empty for transparent)
     pub background: String,
-    
+
     /// Font style (normal, italic, bold)
     pub font_style: FontStyle,
-    
+
     /// Horizontal alignment
     pub horizontal_align: HorizontalAlign,
-    
+
     /// Vertical alignment
     pub vertical_align: VerticalAlign,
-    
+
     /// Outline color as #RRGGBB hex string (empty for no outline)
     pub outline_color: String,
-    
+
     /// Outline width in pixels
     pub outline_width: f32,
-    
+
     /// Custom position relative to the video frame (0.0-1.0 for x and y)
     pub position: Option<(f32, f32)>,
 }
@@ -133,7 +132,7 @@ impl Default for TextStyle {
             font_family: "sans-serif".to_string(),
             font_size: 24,
             color: "#FFFFFF".to_string(), // White
-            background: "".to_string(),   // Transparent
+            background: String::new(),    // Transparent
             font_style: FontStyle::default(),
             horizontal_align: HorizontalAlign::default(),
             vertical_align: VerticalAlign::default(),
@@ -150,70 +149,70 @@ impl TextStyle {
     pub fn new() -> Self {
         Self::default()
     }
-    
+
     /// Sets the font family.
     #[must_use]
     pub fn font_family(mut self, font: impl Into<String>) -> Self {
         self.font_family = font.into();
         self
     }
-    
+
     /// Sets the font size in pixels.
     #[must_use]
     pub fn font_size(mut self, size: u32) -> Self {
         self.font_size = size;
         self
     }
-    
+
     /// Sets the text color as a hex string (#RRGGBB).
     #[must_use]
     pub fn color(mut self, color: impl Into<String>) -> Self {
         self.color = color.into();
         self
     }
-    
+
     /// Sets the background color as a hex string (#RRGGBB).
     #[must_use]
     pub fn background(mut self, color: impl Into<String>) -> Self {
         self.background = color.into();
         self
     }
-    
+
     /// Sets the font style.
     #[must_use]
     pub fn font_style(mut self, style: FontStyle) -> Self {
         self.font_style = style;
         self
     }
-    
+
     /// Sets the horizontal alignment.
     #[must_use]
     pub fn horizontal_align(mut self, align: HorizontalAlign) -> Self {
         self.horizontal_align = align;
         self
     }
-    
+
     /// Sets the vertical alignment.
     #[must_use]
     pub fn vertical_align(mut self, align: VerticalAlign) -> Self {
         self.vertical_align = align;
         self
     }
-    
+
     /// Sets the outline color as a hex string (#RRGGBB).
     #[must_use]
     pub fn outline_color(mut self, color: impl Into<String>) -> Self {
         self.outline_color = color.into();
         self
     }
-    
+
     /// Sets the outline width in pixels.
     #[must_use]
     pub fn outline_width(mut self, width: f32) -> Self {
         self.outline_width = width.max(0.0);
         self
     }
-    
+
     /// Sets a custom position relative to the video frame.
     ///
     /// # Arguments
@@ -227,23 +226,23 @@ impl TextStyle {
         self.position = Some((x, y));
         self
     }
-    
+
     /// Clears the custom position, reverting to alignment-based positioning.
     #[must_use]
     pub fn clear_position(mut self) -> Self {
         self.position = None;
         self
     }
-    
-    /// Converts the style to a WebVTT cue setting string.
+
+    /// Converts the style to a `WebVTT` cue setting string.
     ///
     /// # Returns
     ///
-    /// A string with WebVTT cue settings
+    /// A string with `WebVTT` cue settings
     #[must_use]
     pub fn to_vtt_string(&self) -> String {
         let mut settings = Vec::new();
-        
+
         // Position and alignment
         if let Some((x, y)) = self.position {
             settings.push(format!("position:{}%", (x * 100.0) as u32));
@@ -251,18 +250,18 @@ impl TextStyle {
         } else {
             // Use alignment settings
             settings.push(format!("align:{}", self.horizontal_align));
-            
+
             match self.vertical_align {
                 VerticalAlign::Top => settings.push("line:0%".to_string()),
                 VerticalAlign::Middle => settings.push("line:50%".to_string()),
                 VerticalAlign::Bottom => settings.push("line:100%".to_string()),
             }
         }
-        
+
         // Convert to a VTT cue setting string
         settings.join(" ")
     }
-    
+
     /// Converts the style to a CSS style string.
     ///
     /// # Returns
@@ -271,19 +270,19 @@ impl TextStyle {
     #[must_use]
     pub fn to_css_string(&self) -> String {
         let mut styles = Vec::new();
-        
+
         // Font properties
         styles.push(format!("font-family: {}", self.font_family));
         styles.push(format!("font-size: {}px", self.font_size));
         styles.push(format!("font-style: {}", self.font_style.as_css()));
-        
+
         // Colors
         styles.push(format!("color: {}", self.color));
-        
+
         if !self.background.is_empty() {
             styles.push(format!("background-color: {}", self.background));
         }
-        
+
         // Text outline
         if self.outline_width > 0.0 && !self.outline_color.is_empty() {
             styles.push(format!(
@@ -291,10 +290,10 @@ impl TextStyle {
                 self.outline_width, self.outline_color
             ));
         }
-        
+
         // Text alignment
         styles.push(format!("text-align: {}", self.horizontal_align));
-        
+
         // Convert to a CSS style string
         styles.join("; ")
     }
@@ -303,7 +302,7 @@ impl TextStyle {
 #[cfg(test)]
 mod tests {
     use super::*;
-    
+
     #[test]
     fn test_style_defaults() {
         let style = TextStyle::default();
@@ -313,7 +312,7 @@ mod tests {
         assert_eq!(style.horizontal_align, HorizontalAlign::Center);
         assert_eq!(style.vertical_align, VerticalAlign::Bottom);
     }
-    
+
     #[test]
     fn test_style_builder() {
         let style = TextStyle::new()
@@ -327,7 +326,7 @@ mod tests {
             .outline_color("#333333")
             .outline_width(2.0)
             .position(0.5, 0.8);
-            
+
         assert_eq!(style.font_family, "Arial");
         assert_eq!(style.font_size, 32);
         assert_eq!(style.color, "#FFCC00");
@@ -338,27 +337,27 @@ mod tests {
         assert_eq!(style.outline_color, "#333333");
         assert_eq!(style.outline_width, 2.0);
         assert_eq!(style.position, Some((0.5, 0.8)));
-        
+
         let style = style.clear_position();
         assert_eq!(style.position, None);
     }
-    
+
     #[test]
     fn test_vtt_string_generation() {
         let style = TextStyle::new()
             .horizontal_align(HorizontalAlign::Right)
             .vertical_align(VerticalAlign::Top);
-            
+
         let vtt = style.to_vtt_string();
         assert!(vtt.contains("align:right"));
         assert!(vtt.contains("line:0%"));
-        
+
         let style = TextStyle::new().position(0.25, 0.75);
         let vtt = style.to_vtt_string();
         assert!(vtt.contains("position:25%"));
         assert!(vtt.contains("line:75%"));
     }
-    
+
     #[test]
     fn test_css_string_generation() {
         let style = TextStyle::new()
@@ -366,11 +365,11 @@ mod tests {
             .font_size(32)
             .color("#FFCC00")
             .font_style(FontStyle::BoldItalic);
-            
+
         let css = style.to_css_string();
         assert!(css.contains("font-family: Arial"));
         assert!(css.contains("font-size: 32px"));
         assert!(css.contains("color: #FFCC00"));
         assert!(css.contains("font-style: bold italic"));
     }
-} 
+}

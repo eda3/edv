@@ -11,25 +11,25 @@ use crate::subtitle::error::{Error, Result};
 /// Supported subtitle formats.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum SubtitleFormat {
-    /// SubRip Text format (.srt)
+    /// `SubRip` Text format (.srt)
     Srt,
 
-    /// WebVTT format (.vtt)
+    /// `WebVTT` format (.vtt)
     Vtt,
 
-    /// WebVTT format (.vtt) - 別名
+    /// `WebVTT` format (.vtt) - 別名
     WebVtt,
 
-    /// Advanced SubStation Alpha (.ass, .ssa)
+    /// Advanced `SubStation` Alpha (.ass, .ssa)
     Ass,
 
-    /// Advanced SubStation Alpha (.ass, .ssa) - 別名
+    /// Advanced `SubStation` Alpha (.ass, .ssa) - 別名
     AdvancedSsa,
 
-    /// SubViewer format (.sub)
+    /// `SubViewer` format (.sub)
     SubViewer,
 
-    /// MicroDVD format (.sub)
+    /// `MicroDVD` format (.sub)
     MicroDVD,
 }
 
@@ -41,8 +41,7 @@ impl SubtitleFormat {
             Self::Srt => "srt",
             Self::Vtt | Self::WebVtt => "vtt",
             Self::Ass | Self::AdvancedSsa => "ass",
-            Self::SubViewer => "sub",
-            Self::MicroDVD => "sub",
+            Self::SubViewer | Self::MicroDVD => "sub",
         }
     }
 
@@ -53,8 +52,7 @@ impl SubtitleFormat {
             Self::Srt => "application/x-subrip",
             Self::Vtt | Self::WebVtt => "text/vtt",
             Self::Ass | Self::AdvancedSsa => "text/x-ssa",
-            Self::SubViewer => "text/x-sub",
-            Self::MicroDVD => "text/x-sub",
+            Self::SubViewer | Self::MicroDVD => "text/x-sub",
         }
     }
 
@@ -76,7 +74,7 @@ impl SubtitleFormat {
         let extension = path
             .extension()
             .and_then(|e| e.to_str())
-            .map(|e| e.to_lowercase());
+            .map(str::to_lowercase);
 
         match extension.as_deref() {
             Some("srt") => Ok(Self::Srt),
@@ -89,8 +87,7 @@ impl SubtitleFormat {
                 Ok(Self::SubViewer)
             }
             _ => Err(Error::formatting_error(format!(
-                "Unsupported subtitle extension: {:?}",
-                extension
+                "Unsupported subtitle extension: {extension:?}"
             ))),
         }
     }
@@ -141,7 +138,7 @@ impl SubtitleFormat {
         }
 
         // Check for SubViewer format (starts with timecodes)
-        if content.contains("[INFORMATION]") || content.lines().any(|line| line.contains(":")) {
+        if content.contains("[INFORMATION]") || content.lines().any(|line| line.contains(':')) {
             return Ok(Self::SubViewer);
         }
 
@@ -167,16 +164,45 @@ impl SubtitleFormat {
             "srt" | "vtt" | "ass" | "ssa" | "sub"
         )
     }
+
+    #[must_use]
+    pub fn to_extension(&self) -> &'static str {
+        match self {
+            Self::Srt => "srt",
+            Self::WebVtt | Self::Vtt => "vtt",
+            Self::AdvancedSsa | Self::Ass => "ass",
+            Self::SubViewer | Self::MicroDVD => "sub",
+        }
+    }
+
+    #[must_use]
+    pub fn to_mime(&self) -> &'static str {
+        match self {
+            Self::Srt => "text/x-srt",
+            Self::WebVtt | Self::Vtt => "text/vtt",
+            Self::AdvancedSsa | Self::Ass => "text/x-ass",
+            Self::SubViewer | Self::MicroDVD => "text/x-sub",
+        }
+    }
+
+    #[must_use]
+    pub fn to_name(&self) -> &'static str {
+        match self {
+            Self::Srt => "SubRip",
+            Self::Vtt | Self::WebVtt => "WebVTT",
+            Self::Ass | Self::AdvancedSsa => "Advanced SubStation Alpha",
+            Self::SubViewer => "SubViewer",
+            Self::MicroDVD => "MicroDVD",
+        }
+    }
 }
 
 impl fmt::Display for SubtitleFormat {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         let name = match self {
             Self::Srt => "SubRip",
-            Self::Vtt => "WebVTT",
-            Self::WebVtt => "WebVTT",
-            Self::Ass => "Advanced SubStation Alpha",
-            Self::AdvancedSsa => "Advanced SubStation Alpha",
+            Self::Vtt | Self::WebVtt => "WebVTT",
+            Self::Ass | Self::AdvancedSsa => "Advanced SubStation Alpha",
             Self::SubViewer => "SubViewer",
             Self::MicroDVD => "MicroDVD",
         };
@@ -195,8 +221,7 @@ impl FromStr for SubtitleFormat {
             "subviewer" | "sub" => Ok(Self::SubViewer),
             "microdvd" => Ok(Self::MicroDVD),
             _ => Err(Error::formatting_error(format!(
-                "Unsupported subtitle format: {}",
-                s
+                "Unsupported subtitle format: {s}"
             ))),
         }
     }
@@ -227,7 +252,7 @@ impl TimePosition {
     ///
     /// # Returns
     ///
-    /// A new TimePosition
+    /// A new `TimePosition`
     ///
     /// # Panics
     ///
@@ -255,7 +280,7 @@ impl TimePosition {
     ///
     /// # Returns
     ///
-    /// A new TimePosition
+    /// A new `TimePosition`
     #[must_use]
     pub fn from_seconds(total_seconds: f64) -> Self {
         let total_millis = (total_seconds * 1000.0).round() as u32;
@@ -288,11 +313,7 @@ impl TimePosition {
         hrs + mins + secs
     }
 
-    /// Formats the time position in SRT format (00:00:00,000).
-    ///
-    /// # Returns
-    ///
-    /// Time position formatted as a string
+    /// Time position formatted as a `String`
     #[must_use]
     pub fn to_srt_format(&self) -> String {
         format!(
@@ -301,11 +322,7 @@ impl TimePosition {
         )
     }
 
-    /// Formats the time position in VTT format (00:00:00.000).
-    ///
-    /// # Returns
-    ///
-    /// Time position formatted as a string
+    /// Time position formatted as a `String`
     #[must_use]
     pub fn to_vtt_format(&self) -> String {
         format!(
@@ -314,54 +331,46 @@ impl TimePosition {
         )
     }
 
-    /// Parses a time position from SRT format (00:00:00,000).
-    ///
-    /// # Arguments
-    ///
-    /// * `time_str` - Time string in SRT format
+    /// * `time_str` - Time `String` in SRT format
     ///
     /// # Returns
     ///
-    /// Parsed TimePosition or an error
+    /// Parsed `TimePosition` or an error
     ///
     /// # Errors
     ///
-    /// Returns an error if the time string is invalid
+    /// Returns an error if the time `String` is invalid
     pub fn parse_srt(time_str: &str) -> Result<Self> {
         Self::parse_time(time_str, ',')
     }
 
-    /// Parses a time position from VTT format (00:00:00.000).
-    ///
-    /// # Arguments
-    ///
-    /// * `time_str` - Time string in VTT format
+    /// * `time_str` - Time `String` in VTT format
     ///
     /// # Returns
     ///
-    /// Parsed TimePosition or an error
+    /// Parsed `TimePosition` or an error
     ///
     /// # Errors
     ///
-    /// Returns an error if the time string is invalid
+    /// Returns an error if the time `String` is invalid
     pub fn parse_vtt(time_str: &str) -> Result<Self> {
         Self::parse_time(time_str, '.')
     }
 
-    /// Parses a time position from a string with the specified separator.
+    /// Parses a time position from a `String` with the specified separator.
     ///
     /// # Arguments
     ///
-    /// * `time_str` - Time string to parse
-    /// * `separator` - Separator between seconds and milliseconds
+    /// * `time_str` - Time `String` to parse
+    /// * `separator` - Character separating seconds and milliseconds
     ///
     /// # Returns
     ///
-    /// Parsed TimePosition or an error
+    /// Parsed `TimePosition` or an error
     ///
     /// # Errors
     ///
-    /// Returns an error if the time string is invalid
+    /// Returns an error if the time `String` is invalid
     fn parse_time(time_str: &str, separator: char) -> Result<Self> {
         // Expected format: 00:00:00{separator}000
         let parts: Vec<&str> = time_str.split(separator).collect();
@@ -418,10 +427,12 @@ impl TimePosition {
         })
     }
 
+    #[must_use]
     pub fn as_seconds(&self) -> f64 {
         self.to_seconds()
     }
 
+    #[must_use]
     pub fn to_srt_string(&self) -> String {
         format!(
             "{:02}:{:02}:{:02},{:03}",
@@ -429,6 +440,7 @@ impl TimePosition {
         )
     }
 
+    #[must_use]
     pub fn to_vtt_string(&self) -> String {
         format!(
             "{:02}:{:02}:{:02}.{:03}",

@@ -121,7 +121,7 @@ impl Subtitle {
         self.style = Some(style);
     }
 
-    /// Gets the duration of the subtitle in seconds.
+    /// Duration of the subtitle in seconds (alternative to `end_time`)
     #[must_use]
     pub fn duration(&self) -> f64 {
         self.end_time.as_seconds() - self.start_time.as_seconds()
@@ -192,7 +192,7 @@ impl Subtitle {
     ///
     /// # Returns
     ///
-    /// The subtitle formatted as an SRT string
+    /// The subtitle formatted as an SRT `String`
     #[must_use]
     pub fn to_srt(&self) -> String {
         format!(
@@ -204,11 +204,11 @@ impl Subtitle {
         )
     }
 
-    /// Formats the subtitle in WebVTT format.
+    /// Formats the subtitle in `WebVTT` format.
     ///
     /// # Returns
     ///
-    /// The subtitle formatted as a WebVTT string
+    /// The subtitle formatted as a `WebVTT` `String`
     #[must_use]
     pub fn to_vtt(&self) -> String {
         let mut result = String::new();
@@ -433,7 +433,7 @@ impl SubtitleTrack {
     ///
     /// # Returns
     ///
-    /// The formatted SRT string
+    /// The formatted SRT `String`
     #[must_use]
     pub fn format_as_srt(&self) -> String {
         let mut result = String::new();
@@ -458,11 +458,11 @@ impl SubtitleTrack {
         result
     }
 
-    /// Formats the entire subtitle track as WebVTT.
+    /// Formats the entire subtitle track as `WebVTT`.
     ///
     /// # Returns
     ///
-    /// The formatted WebVTT string
+    /// The formatted `WebVTT` `String`
     #[must_use]
     pub fn format_as_vtt(&self) -> String {
         let mut result = String::from("WEBVTT\n\n");
@@ -490,6 +490,7 @@ impl SubtitleTrack {
     /// # Returns
     ///
     /// A vector containing all subtitle IDs.
+    #[must_use]
     pub fn get_subtitle_ids(&self) -> Vec<String> {
         self.subtitles.keys().cloned().collect()
     }
@@ -584,7 +585,7 @@ impl SubtitleBuilder {
     ///
     /// # Returns
     ///
-    /// A Result containing either the built Subtitle or an error
+    /// A `Result` containing either the built `Subtitle` or an error
     ///
     /// # Errors
     ///

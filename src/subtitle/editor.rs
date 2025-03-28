@@ -83,6 +83,7 @@ impl ShiftBuilder {
     /// # Returns
     ///
     /// The number of subtitles that were shifted
+    #[must_use]
     pub fn apply(&self, track: &mut SubtitleTrack) -> usize {
         let mut count = 0;
 
@@ -163,7 +164,6 @@ impl SubtitleEditor {
         // Determine format from extension
         let format = if let Some(ext) = path_ref.extension().and_then(|e| e.to_str()) {
             match ext.to_lowercase().as_str() {
-                "srt" => SubtitleFormat::Srt,
                 "vtt" => SubtitleFormat::WebVtt,
                 "ass" | "ssa" => SubtitleFormat::AdvancedSsa,
                 _ => SubtitleFormat::Srt, // Default to SRT
@@ -433,7 +433,7 @@ impl SubtitleEditor {
             Subtitle::new(start, split_time, subtitle.get_text()).with_id(id.to_string());
 
         // Generate a new ID for the second subtitle
-        let new_id = format!("{}-1", id);
+        let new_id = format!("{id}-1");
         let second_half = Subtitle::new(split_time, end, subtitle.get_text()).with_id(new_id);
 
         // Apply styles if present
@@ -479,14 +479,11 @@ impl SubtitleEditor {
                 let second_id = &ids[j];
 
                 // 両方のサブタイトルを取得して比較（ここでは読み取りのみ）
-                let first = match self.track.get_subtitle(first_id) {
-                    Some(s) => s,
-                    None => continue,
+                let Some(first) = self.track.get_subtitle(first_id) else {
+                    continue;
                 };
-
-                let second = match self.track.get_subtitle(second_id) {
-                    Some(s) => s,
-                    None => continue,
+                let Some(second) = self.track.get_subtitle(second_id) else {
+                    continue;
                 };
 
                 let first_start = first.get_start().as_seconds();

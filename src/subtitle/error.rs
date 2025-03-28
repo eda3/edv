@@ -2,7 +2,6 @@
 ///
 /// This module defines error types specific to subtitle processing operations.
 /// It uses thiserror for ergonomic error definitions and handling.
-
 use std::path::PathBuf;
 use thiserror::Error;
 
@@ -88,7 +87,7 @@ pub enum Error {
     #[error("Failed to burn subtitles into video: {0}")]
     BurnError(String),
 
-    /// Error in underlying FFmpeg operation.
+    /// Error in underlying `FFmpeg` operation.
     #[error("FFmpeg error: {0}")]
     FFmpegError(#[from] ffmpeg::Error),
 }
@@ -206,7 +205,11 @@ impl Error {
     /// * `start` - Start time of the subtitle
     /// * `end` - End time of the subtitle
     #[must_use]
-    pub fn invalid_split_point(split_time: TimePosition, start: TimePosition, end: TimePosition) -> Self {
+    pub fn invalid_split_point(
+        split_time: TimePosition,
+        start: TimePosition,
+        end: TimePosition,
+    ) -> Self {
         Self::InvalidSplitPoint {
             split_time,
             start,
@@ -220,7 +223,7 @@ impl Error {
         Self::NoFilePath
     }
 
-    /// Creates a new RenderError.
+    /// Creates a new `RenderError`.
     ///
     /// # Arguments
     ///
@@ -228,13 +231,13 @@ impl Error {
     ///
     /// # Returns
     ///
-    /// A new Error::RenderError
+    /// A new `Error::RenderError`
     #[must_use]
     pub fn render_error(message: impl Into<String>) -> Self {
         Self::RenderError(message.into())
     }
 
-    /// Creates a new BurnError.
+    /// Creates a new `BurnError`.
     ///
     /// # Arguments
     ///
@@ -242,9 +245,9 @@ impl Error {
     ///
     /// # Returns
     ///
-    /// A new Error::BurnError
+    /// A new `Error::BurnError`
     #[must_use]
     pub fn burn_error(message: impl Into<String>) -> Self {
         Self::BurnError(message.into())
     }
-} 
+}

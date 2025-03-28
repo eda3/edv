@@ -114,7 +114,7 @@ impl Display for Version {
 impl FromStr for Version {
     type Err = Error;
 
-    /// Parses a version string into a Version object.
+    /// Parses a version string into a `Version` object.
     ///
     /// # Arguments
     ///
@@ -122,7 +122,7 @@ impl FromStr for Version {
     ///
     /// # Returns
     ///
-    /// A Result containing the parsed Version or an error.
+    /// A `Result` containing the parsed `Version` or an error.
     ///
     /// # Errors
     ///
