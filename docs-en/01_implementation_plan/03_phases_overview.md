@@ -83,7 +83,7 @@ The foundation of the project has been successfully established:
 - ✅ Core video operations framework established
 - ✅ Basic configuration management implemented
 
-### Phase 2: Extended Functionality - PARTIALLY COMPLETED
+### Phase 2: Extended Functionality - PARTIALLY COMPLETED (75%)
 
 Significant progress has been made on extended functionality:
 
@@ -98,7 +98,12 @@ Significant progress has been made on extended functionality:
   - Format handling (`src/subtitle/format.rs`)
   - Style management (`src/subtitle/style.rs`)
   - Subtitle parser (`src/subtitle/parser.rs`)
-- 🔄 Timeline editing features: In progress
+- 🔄 Timeline editing features:
+  - ✅ Basic timeline data model implemented (`src/project/timeline/mod.rs`)
+  - ✅ Multi-track relationship management (`src/project/timeline/multi_track.rs`)
+  - ✅ Track relationship serialization/deserialization (`src/project/serialization/json.rs`)
+  - 🔄 Advanced timeline operations in progress
+  - 🔄 Project state persistence partially implemented
 - ✅ Error handling and logging enhanced
 
 ### Phase 3 & 4: Future Work
@@ -109,8 +114,10 @@ Work on the advanced features (Phase 3) and optimizations (Phase 4) has not yet 
 
 The immediate focus is on completing the remaining components of Phase 2:
 
-1. Implement timeline data model and basic editing features
-2. Complete user documentation for existing functionality
-3. Enhance test coverage for audio and subtitle components
+1. Finalize advanced timeline features and operations
+2. Complete project state persistence with optimized serialization
+3. Implement comprehensive timeline validation
+4. Enhance documentation for existing functionality
+5. Improve test coverage for all components
 
 See the [Implementation Priorities](05_priorities.md) and [Development Timeline](04_timeline.md) for more details on current progress and updated schedules. 

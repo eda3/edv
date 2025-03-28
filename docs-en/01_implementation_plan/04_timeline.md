@@ -59,4 +59,46 @@ The timeline includes buffer periods to account for:
 
 Review points will be scheduled at the end of each phase to assess progress and adjust subsequent phases if necessary.
 
-See [Implementation Priorities](05_priorities.md) for more information on prioritization during development. 
+See [Implementation Priorities](05_priorities.md) for more information on prioritization during development.
+
+## Timeline Update (2024)
+
+The development timeline has been adjusted based on actual progress and implementation challenges. Key updates include:
+
+### Progress Status
+
+| Phase | Original Estimate | Current Status | Actual Duration |
+|-------|-------------------|----------------|-----------------|
+| Phase 1 | 4-6 weeks | ✅ Completed | 6 weeks |
+| Phase 2 | 4-6 weeks | 🔄 75% Complete | 8 weeks (ongoing) |
+| Phase 3 | 6-8 weeks | 🔜 Not Started | - |
+| Phase 4 | 4-6 weeks | 🔜 Not Started | - |
+
+### Phase 2 Milestone Updates
+
+Phase 2 implementation has achieved several important milestones:
+
+- ✅ **Week 7-8:** Audio processing completed with full support for volume adjustment, fading, extraction and replacement
+- ✅ **Week 9-10:** Subtitle support completed with format handling, editing, and style management
+- ✅ **Week 11-13:** Basic timeline data model implemented with track and clip management
+- ✅ **Week 14-15:** Multi-track relationship model implemented with relationship types and dependency management
+- ✅ **Week 16:** Track relationship serialization/deserialization completed
+
+### Remaining Phase 2 Work
+
+The following components are still in progress for Phase 2 completion:
+
+- 🔄 **Week 17-18:** Timeline advanced operations and validation (in progress)
+- 🔄 **Week 19:** Project state persistence optimization (in progress)
+- 🔄 **Week 20:** Documentation and test coverage enhancement
+
+### Revised Timeline for Completion
+
+The revised timeline for completing the remaining phases is:
+
+- **Phase 2 Completion:** Expected in 4 weeks
+- **Phase 3 Start:** Planned for Q3 2024
+- **Phase 4 Start:** Planned for Q4 2024
+- **1.0 Release:** Now projected for Q1 2025
+
+This timeline adjustment reflects the additional time devoted to ensuring robust implementation of critical components, particularly the complex multi-track relationship management and serialization systems, which provide essential foundations for the remaining development. 
