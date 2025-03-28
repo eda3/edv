@@ -14,7 +14,8 @@ use std::error::Error as StdError;
 use thiserror::Error;
 
 // Submodules
-pub mod command;
+// pub mod command;
+pub mod error;
 
 /// Errors that can occur in the FFmpeg module.
 #[derive(Error, Debug)]
