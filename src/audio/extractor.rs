@@ -127,14 +127,14 @@ impl ExtractionOptions {
 ///
 /// # Arguments
 ///
-/// * `ffmpeg` - The FFmpeg instance to use
+/// * `ffmpeg` - The `FFmpeg` instance to use
 /// * `input` - Path to the input video file
 /// * `output` - Path to the output audio file
 /// * `options` - Extraction options
 ///
 /// # Returns
 ///
-/// A Result indicating success or an error
+/// A `Result` indicating success or an error
 ///
 /// # Errors
 ///
@@ -216,12 +216,12 @@ where
 ///
 /// # Arguments
 ///
-/// * `ffmpeg` - The FFmpeg instance to use
+/// * `ffmpeg` - The `FFmpeg` instance to use
 /// * `input` - Path to the input video file
 ///
 /// # Returns
 ///
-/// A Result containing a vector of stream information (index, codec, channels, sample rate)
+/// A `Result` containing a vector of stream information (index, codec, channels, sample rate)
 ///
 /// # Errors
 ///
@@ -245,15 +245,15 @@ where
 ///
 /// # Arguments
 ///
-/// * `ffmpeg` - The FFmpeg instance to use
+/// * `ffmpeg` - The `FFmpeg` instance to use
 /// * `input` - Path to the input video file
 /// * `output` - Path to the output audio file
-/// * `segments` - List of (start_time, duration) tuples in seconds
+/// * `segments` - List of (`start_time`, `duration`) tuples in seconds
 /// * `options` - Extraction options
 ///
 /// # Returns
 ///
-/// A Result indicating success or an error
+/// A `Result` indicating success or an error
 ///
 /// # Errors
 ///
@@ -277,8 +277,7 @@ where
     for (i, (start, duration)) in segments.iter().enumerate() {
         if *start < 0.0 || *duration <= 0.0 {
             return Err(Error::ProcessingError(format!(
-                "Invalid segment {}: start={}, duration={}",
-                i, start, duration
+                "Invalid segment {i}: start={start}, duration={duration}"
             )));
         }
     }
@@ -289,8 +288,7 @@ where
     // Create filter for each segment
     for (i, (start, duration)) in segments.iter().enumerate() {
         filter_complex.push_str(&format!(
-            "[0:a]atrim=start={}:duration={},asetpts=PTS-STARTPTS[a{}];",
-            start, duration, i
+            "[0:a]atrim=start={start}:duration={duration},asetpts=PTS-STARTPTS[a{i}];"
         ));
     }
 
@@ -300,7 +298,7 @@ where
         segments
             .iter()
             .enumerate()
-            .map(|(i, _)| format!("[a{}]", i))
+            .map(|(i, _)| format!("[a{i}]"))
             .collect::<Vec<_>>()
             .join(""),
         segments.len()

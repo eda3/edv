@@ -1,7 +1,7 @@
 /// Error types for the audio processing module.
 ///
 /// This module defines error types specific to audio processing operations.
-/// It uses thiserror for ergonomic error definitions and handling.
+/// It uses `thiserror` for ergonomic error definitions and handling.
 use std::path::PathBuf;
 use thiserror::Error;
 
@@ -55,7 +55,7 @@ pub enum Error {
     #[error("Audio sync error: {0}")]
     SyncError(String),
 
-    /// Error in underlying FFmpeg operation.
+    /// Error in underlying `FFmpeg` operation.
     #[error("FFmpeg error: {0}")]
     FFmpegError(#[from] ffmpeg::Error),
 
@@ -69,7 +69,7 @@ pub enum Error {
 }
 
 impl Error {
-    /// Creates a new UnsupportedFormat error.
+    /// Creates a new `UnsupportedFormat` error.
     ///
     /// # Arguments
     ///
@@ -77,13 +77,13 @@ impl Error {
     ///
     /// # Returns
     ///
-    /// A new Error::UnsupportedFormat
+    /// A new `Error::UnsupportedFormat`
     #[must_use = "This function returns an error that should be handled"]
     pub fn unsupported_format(format: impl Into<String>) -> Self {
         Self::UnsupportedFormat(format.into())
     }
 
-    /// Creates a new NoAudioStream error.
+    /// Creates a new `NoAudioStream` error.
     ///
     /// # Arguments
     ///
@@ -91,13 +91,13 @@ impl Error {
     ///
     /// # Returns
     ///
-    /// A new Error::NoAudioStream
+    /// A new `Error::NoAudioStream`
     #[must_use = "This function returns an error that should be handled"]
     pub fn no_audio_stream(path: impl Into<PathBuf>) -> Self {
         Self::NoAudioStream(path.into())
     }
 
-    /// Creates a new InvalidAudioData error.
+    /// Creates a new `InvalidAudioData` error.
     ///
     /// # Arguments
     ///
@@ -106,7 +106,7 @@ impl Error {
     ///
     /// # Returns
     ///
-    /// A new Error::InvalidAudioData
+    /// A new `Error::InvalidAudioData`
     #[must_use = "This function returns an error that should be handled"]
     pub fn invalid_audio_data(file: impl Into<PathBuf>, reason: impl Into<String>) -> Self {
         Self::InvalidAudioData {
@@ -115,7 +115,7 @@ impl Error {
         }
     }
 
-    /// Creates a new TrackNotFound error.
+    /// Creates a new `TrackNotFound` error.
     ///
     /// # Arguments
     ///
@@ -124,7 +124,7 @@ impl Error {
     ///
     /// # Returns
     ///
-    /// A new Error::TrackNotFound
+    /// A new `Error::TrackNotFound`
     #[must_use = "This function returns an error that should be handled"]
     pub fn track_not_found(file: impl Into<PathBuf>, track: usize) -> Self {
         Self::TrackNotFound {

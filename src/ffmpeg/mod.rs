@@ -126,7 +126,7 @@ impl FromStr for Version {
     ///
     /// # Errors
     ///
-    /// Returns a ParseError if the version string is invalid.
+    /// Returns a `ParseError` if the version string is invalid.
     fn from_str(s: &str) -> std::result::Result<Self, Self::Err> {
         let parts: Vec<&str> = s.split('.').collect();
         if parts.len() < 3 {

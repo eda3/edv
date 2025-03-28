@@ -25,7 +25,7 @@ pub enum FadeType {
 }
 
 impl FadeType {
-    /// Converts the fade type to a string recognized by FFmpeg.
+    /// Converts the fade type to a string recognized by `FFmpeg`.
     #[must_use]
     fn as_ffmpeg_string(&self) -> &'static str {
         match self {
@@ -107,7 +107,7 @@ impl FadeOptions {
 ///
 /// # Arguments
 ///
-/// * `ffmpeg` - The FFmpeg instance to use
+/// * `ffmpeg` - The `FFmpeg` instance to use
 /// * `input` - Path to the input file
 /// * `output` - Path to the output file
 /// * `duration` - Duration of the fade-in effect in seconds
@@ -116,7 +116,7 @@ impl FadeOptions {
 ///
 /// # Returns
 ///
-/// A Result indicating success or an error
+/// A `Result` indicating success or an error
 ///
 /// # Errors
 ///
@@ -170,7 +170,7 @@ where
 ///
 /// # Arguments
 ///
-/// * `ffmpeg` - The FFmpeg instance to use
+/// * `ffmpeg` - The `FFmpeg` instance to use
 /// * `input` - Path to the input file
 /// * `output` - Path to the output file
 /// * `duration` - Duration of the fade-out effect in seconds
@@ -179,7 +179,7 @@ where
 ///
 /// # Returns
 ///
-/// A Result indicating success or an error
+/// A `Result` indicating success or an error
 ///
 /// # Errors
 ///
@@ -241,7 +241,7 @@ where
 ///
 /// # Arguments
 ///
-/// * `ffmpeg` - The FFmpeg instance to use
+/// * `ffmpeg` - The `FFmpeg` instance to use
 /// * `input` - Path to the input file
 /// * `output` - Path to the output file
 /// * `fade_in_duration` - Duration of the fade-in effect in seconds
@@ -251,7 +251,7 @@ where
 ///
 /// # Returns
 ///
-/// A Result indicating success or an error
+/// A `Result` indicating success or an error
 ///
 /// # Errors
 ///
@@ -321,17 +321,17 @@ where
 ///
 /// # Arguments
 ///
-/// * `ffmpeg` - The FFmpeg instance to use
+/// * `ffmpeg` - The `FFmpeg` instance to use
 /// * `input` - Path to the input file
 /// * `output` - Path to the output file
-/// * `segments` - List of (start_time, duration, fade_in, fade_out) where fade_in and fade_out are booleans
+/// * `segments` - List of (`start_time`, `duration`, `fade_in`, `fade_out`) where `fade_in` and `fade_out` are booleans
 /// * `fade_duration` - Duration for both fade-in and fade-out effects in seconds
 /// * `fade_type` - Type of fade curve to apply
 /// * `options` - Additional options for the operation
 ///
 /// # Returns
 ///
-/// A Result indicating success or an error
+/// A `Result` indicating success or an error
 ///
 /// # Errors
 ///

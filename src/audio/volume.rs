@@ -54,7 +54,7 @@ impl VolumeAdjustment {
     ///
     /// # Returns
     ///
-    /// A new VolumeAdjustment::Linear
+    /// A new `VolumeAdjustment::Linear`
     #[must_use]
     pub fn linear(value: f64) -> Self {
         Self::Linear(common::normalize_volume_level(value))
@@ -68,7 +68,7 @@ impl VolumeAdjustment {
     ///
     /// # Returns
     ///
-    /// A new VolumeAdjustment::Decibel
+    /// A new `VolumeAdjustment::Decibel`
     #[must_use]
     pub fn decibel(db: f64) -> Self {
         Self::Decibel(db.clamp(-60.0, 20.0))
@@ -90,14 +90,14 @@ pub struct TemporalAdjustment {
 ///
 /// # Arguments
 ///
-/// * `ffmpeg` - The FFmpeg instance to use
+/// * `ffmpeg` - The `FFmpeg` instance to use
 /// * `input` - Path to the input file
 /// * `output` - Path to the output file
 /// * `adjustment` - The volume adjustment to apply
 ///
 /// # Returns
 ///
-/// A Result indicating success or an error
+/// A `Result` indicating success or an error
 ///
 /// # Errors
 ///
@@ -134,14 +134,14 @@ where
 ///
 /// # Arguments
 ///
-/// * `ffmpeg` - The FFmpeg instance to use
+/// * `ffmpeg` - The `FFmpeg` instance to use
 /// * `input` - Path to the input file
 /// * `output` - Path to the output file
 /// * `adjustments` - List of temporal volume adjustments to apply
 ///
 /// # Returns
 ///
-/// A Result indicating success or an error
+/// A `Result` indicating success or an error
 ///
 /// # Errors
 ///
@@ -209,14 +209,14 @@ where
 ///
 /// # Arguments
 ///
-/// * `ffmpeg` - The FFmpeg instance to use
+/// * `ffmpeg` - The `FFmpeg` instance to use
 /// * `input` - Path to the input file
 /// * `output` - Path to the output file
 /// * `target_level` - Target audio level in dB (typically -18 to -14)
 ///
 /// # Returns
 ///
-/// A Result indicating success or an error
+/// A `Result` indicating success or an error
 ///
 /// # Errors
 ///

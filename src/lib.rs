@@ -8,7 +8,7 @@
 ///
 /// - Video editing: cut, join, resize, convert
 /// - Audio processing: volume adjustment, extraction, replacement
-/// - Subtitle support: SRT, WebVTT, styling, positioning
+/// - Subtitle support: `SRT`, `WebVTT`, styling, positioning
 /// - Timeline editing: multi-track, effects, transitions
 ///
 /// # Examples

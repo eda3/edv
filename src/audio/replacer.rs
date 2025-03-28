@@ -199,7 +199,7 @@ impl ReplacementOptions {
 ///
 /// # Arguments
 ///
-/// * `ffmpeg` - The FFmpeg instance to use
+/// * `ffmpeg` - The `FFmpeg` instance to use
 /// * `video` - Path to the input video file
 /// * `audio` - Path to the replacement audio file
 /// * `output` - Path to the output video file
@@ -207,7 +207,7 @@ impl ReplacementOptions {
 ///
 /// # Returns
 ///
-/// A Result indicating success or an error
+/// A `Result` indicating success or an error
 ///
 /// # Errors
 ///
@@ -298,14 +298,14 @@ where
 ///
 /// # Arguments
 ///
-/// * `ffmpeg` - The FFmpeg instance to use
+/// * `ffmpeg` - The `FFmpeg` instance to use
 /// * `input` - Path to the input video file
 /// * `output` - Path to the output video file
-/// * `options` - Replacement options (only codec, bitrate, and sample_rate are used)
+/// * `options` - Replacement options (only `codec`, `bitrate`, and `sample_rate` are used)
 ///
 /// # Returns
 ///
-/// A Result indicating success or an error
+/// A `Result` indicating success or an error
 ///
 /// # Errors
 ///
@@ -349,16 +349,16 @@ where
 ///
 /// # Arguments
 ///
-/// * `ffmpeg` - The FFmpeg instance to use
+/// * `ffmpeg` - The `FFmpeg` instance to use
 /// * `video` - Path to the input video file
 /// * `audio` - Path to the replacement audio file
 /// * `output` - Path to the output video file
-/// * `segments` - List of (video_start, video_end, audio_start) positions in seconds
+/// * `segments` - List of (`video_start`, `video_end`, `audio_start`) positions in seconds
 /// * `options` - Replacement options
 ///
 /// # Returns
 ///
-/// A Result indicating success or an error
+/// A `Result` indicating success or an error
 ///
 /// # Errors
 ///
