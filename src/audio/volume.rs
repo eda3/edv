@@ -165,7 +165,7 @@ where
     // Build a complex filter string that applies volume adjustments to specific segments
     let mut filter_parts = Vec::new();
 
-    for adj in adjustments.iter() {
+    for adj in adjustments {
         if adj.adjustment.as_linear() < 0.0 {
             return Err(Error::InvalidVolumeLevel(adj.adjustment.as_linear()));
         }
