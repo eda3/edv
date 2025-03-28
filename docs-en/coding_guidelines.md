@@ -321,6 +321,170 @@ fn sum_even_numbers(numbers: &[i32]) -> i32 {
 - **Leverage zero-cost abstractions**: Use Rust's zero-cost abstractions to write high-level code without performance penalties.
 - **Consider async when appropriate**: Use async/await for I/O-bound operations but be aware of the complexity trade-offs.
 
+## Handling Compiler and Clippy Warnings
+
+The edv project aims to maintain a clean codebase free of warnings. Here are guidelines for handling various warnings:
+
+### Type Conversions and Casting
+
+- **Handle sign loss warnings appropriately**: When casting from signed types (like `f64`) to unsigned types (like `u64`):
+  - Add bounds checks using `max(0.0)` to prevent negative values
+  - Use `#[allow(clippy::cast_sign_loss)]` only when the conversion is intentional and safe
+
+  ```rust
+  // Bad practice - potential sign loss
+  let secs = self.seconds as u64;
+  
+  // Good practice - prevent negative values
+  let secs = (self.seconds.floor().max(0.0)) as u64;
+  ```
+
+### Trait Implementations
+
+- **Implement `PartialOrd` and `Ord` in the correct order**:
+  - Implement `Ord` first, containing the comparison logic
+  - Then implement `PartialOrd` based on `Ord`
+
+  ```rust
+  // Good practice
+  impl Ord for Duration {
+      fn cmp(&self, other: &Self) -> std::cmp::Ordering {
+          self.seconds.partial_cmp(&other.seconds).unwrap_or(std::cmp::Ordering::Equal)
+      }
+  }
+  
+  impl PartialOrd for Duration {
+      fn partial_cmp(&self, other: &Self) -> Option<std::cmp::Ordering> {
+          Some(self.cmp(other))
+      }
+  }
+  ```
+
+### Collections and Default Values
+
+- **Use `or_default()` instead of `or_insert_with(Collection::new)`**:
+  - Prefer `or_default()` when inserting default collection values
+  - This applies to `HashMap`, `HashSet`, `Vec`, etc.
+
+  ```rust
+  // Bad practice
+  self.dependencies
+      .entry(source_id)
+      .or_insert_with(HashMap::new)
+      .insert(target_id, relationship);
+  
+  // Good practice
+  self.dependencies
+      .entry(source_id)
+      .or_default()
+      .insert(target_id, relationship);
+  ```
+
+### Closures and Functions
+
+- **Avoid redundant closures**:
+  - Pass function pointers directly instead of wrapping them in closures
+  - Especially important for error conversions and mapping functions
+
+  ```rust
+  // Bad practice
+  fs::create_dir_all(&config.cache_dir).map_err(|e| Error::Io(e))?;
+  
+  // Good practice
+  fs::create_dir_all(&config.cache_dir).map_err(Error::Io)?;
+  ```
+
+### Option Handling
+
+- **Use `is_some_and()` instead of `map_or()`** for Option checks with boolean predicates:
+  - Simplifies common pattern of checking and testing Option values
+
+  ```rust
+  // Bad practice
+  path.extension().map_or(false, |ext| ext.eq_ignore_ascii_case("mp4"))
+  
+  // Good practice
+  path.extension().is_some_and(|ext| ext.eq_ignore_ascii_case("mp4"))
+  ```
+
+### Default Trait Implementation
+
+- **Implement `Default` trait instead of custom `default()` methods**:
+  - Prefer implementing the standard `Default` trait
+  - This enables compatibility with standard library functions and macros
+
+  ```rust
+  // Bad practice
+  impl OutputFormatter {
+      pub fn default() -> Self {
+          Self {
+              colored: true,
+              verbose: false,
+          }
+      }
+  }
+  
+  // Good practice
+  impl Default for OutputFormatter {
+      fn default() -> Self {
+          Self {
+              colored: true,
+              verbose: false,
+          }
+      }
+  }
+  ```
+
+### Handling Unused Code
+
+- **Indicate intentionally unused variables** with underscore prefix:
+  - Add `_` before variable names that are intentionally unused
+
+  ```rust
+  // Bad practice
+  fn synchronize_locked_tracks(&self, source_id: TrackId, target_id: TrackId, timeline: &mut Timeline) -> Result<()> {
+      // Implementation placeholder
+      Ok(())
+  }
+  
+  // Good practice
+  fn synchronize_locked_tracks(&self, _source_id: TrackId, _target_id: TrackId, _timeline: &mut Timeline) -> Result<()> {
+      // Implementation placeholder
+      Ok(())
+  }
+  ```
+
+- **Handle dead code warnings appropriately**:
+  - For temporary/development code, add `#[allow(dead_code)]` on specific items
+  - For project-wide settings, configure in `Cargo.toml`:
+    ```toml
+    [lints.rust]
+    dead_code = "allow"
+    ```
+
+### Import Management
+
+- **Only import what you use**:
+  - Remove unnecessary imports
+  - Use specific imports rather than broad ones
+  - Place test-specific imports in the test module, not at the file level
+
+  ```rust
+  // Bad practice
+  use std::io::{BufReader, BufWriter, Read, Write};
+  
+  // Good practice - main module
+  use std::io::{BufReader, BufWriter};
+  
+  // In test module
+  #[cfg(test)]
+  mod tests {
+      use super::*;
+      use std::io::{Read, Write};
+      // Test code...
+  }
+  ```
+
 ## Review Process
 
 All code contributions should undergo a review process that verifies:
