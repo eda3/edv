@@ -3,15 +3,14 @@
 /// This module contains the core application structure and entry point
 /// for running the CLI tool. It handles initialization, command dispatch,
 /// and coordination between various components of the application.
-
 use std::path::PathBuf;
 
 use clap::{Parser, Subcommand};
 
-use crate::core::{Config, Context, Logger, LogLevel};
 use crate::core::console::ConsoleLogger;
+use crate::core::{Config, Context, LogLevel, Logger};
 
-use super::{Result, Error, CommandRegistry, Command};
+use super::{CommandRegistry, Result};
 
 /// CLI application structure.
 ///
@@ -41,11 +40,11 @@ pub struct Cli {
     /// Subcommand to execute
     #[clap(subcommand)]
     pub command: Commands,
-    
+
     /// Enable verbose output
     #[clap(short, long, global = true)]
     pub verbose: bool,
-    
+
     /// Path to configuration file
     #[clap(short, long, global = true)]
     pub config: Option<PathBuf>,
@@ -62,45 +61,45 @@ pub enum Commands {
         /// Input video file path
         #[clap(short, long, value_parser)]
         input: String,
-        
+
         /// Output video file path
         #[clap(short, long, value_parser)]
         output: String,
-        
+
         /// Start time (format: HH:MM:SS.mmm or seconds)
         #[clap(short, long)]
         start: Option<String>,
-        
+
         /// End time (format: HH:MM:SS.mmm or seconds)
         #[clap(short, long)]
         end: Option<String>,
-        
+
         /// Re-encode the video instead of using stream copy
         #[clap(short, long, action)]
         recompress: bool,
     },
-    
+
     /// Concatenate multiple video files
     Concat {
         /// Input video files
         #[clap(short, long, value_parser, num_args = 1..)]
         input: Vec<String>,
-        
+
         /// Output video file path
         #[clap(short, long, value_parser)]
         output: String,
-        
+
         /// Re-encode the video instead of using stream copy
         #[clap(short, long, action)]
         recompress: bool,
     },
-    
+
     /// Display information about a media file
     Info {
         /// Input media file path
         #[clap(value_parser)]
         input: String,
-        
+
         /// Show detailed information
         #[clap(short, long, action)]
         detailed: bool,
@@ -125,7 +124,7 @@ impl App {
             logger,
         }
     }
-    
+
     /// Initializes the application, registering all available commands.
     ///
     /// # Returns
@@ -134,11 +133,11 @@ impl App {
     pub fn initialize(&mut self) -> Result<()> {
         // Register all commands
         self.register_commands()?;
-        
+
         self.logger.info("Application initialized");
         Ok(())
     }
-    
+
     /// Registers all available commands with the command registry.
     ///
     /// # Returns
@@ -149,7 +148,7 @@ impl App {
         // This is a placeholder to avoid compiler warnings
         Ok(())
     }
-    
+
     /// Executes the given command with its arguments.
     ///
     /// # Arguments
@@ -161,45 +160,55 @@ impl App {
     /// `Result<()>` indicating success or failure.
     pub fn execute_command(&self, command: Commands) -> Result<()> {
         // Create execution context
-        let context = self.create_execution_context()?;
-        
+        let _context = self.create_execution_context()?;
+
         // Match on command type and execute appropriate handler
         match command {
-            Commands::Trim { input, output, start, end, recompress } => {
+            Commands::Trim {
+                input,
+                output,
+                start,
+                end,
+                recompress,
+            } => {
                 self.logger.debug(&format!(
                     "Executing trim command: input={}, output={}, start={:?}, end={:?}, recompress={}",
                     input, output, start, end, recompress
                 ));
-                
+
                 // Command implementation will be added later
                 // This is a placeholder to avoid unused variable warnings
                 self.logger.info("Trim command executed successfully");
-            },
-            Commands::Concat { input, output, recompress } => {
+            }
+            Commands::Concat {
+                input,
+                output,
+                recompress,
+            } => {
                 self.logger.debug(&format!(
                     "Executing concat command: input={:?}, output={}, recompress={}",
                     input, output, recompress
                 ));
-                
+
                 // Command implementation will be added later
                 // This is a placeholder to avoid unused variable warnings
                 self.logger.info("Concat command executed successfully");
-            },
+            }
             Commands::Info { input, detailed } => {
                 self.logger.debug(&format!(
                     "Executing info command: input={}, detailed={}",
                     input, detailed
                 ));
-                
+
                 // Command implementation will be added later
                 // This is a placeholder to avoid unused variable warnings
                 self.logger.info("Info command executed successfully");
-            },
+            }
         }
-        
+
         Ok(())
     }
-    
+
     /// Creates an execution context for command execution.
     ///
     /// # Returns
@@ -224,23 +233,27 @@ impl App {
 pub fn run() -> Result<()> {
     // Parse command line arguments
     let cli = Cli::parse();
-    
+
     // Determine log level based on verbose flag
-    let log_level = if cli.verbose { LogLevel::Debug } else { LogLevel::Info };
-    
+    let log_level = if cli.verbose {
+        LogLevel::Debug
+    } else {
+        LogLevel::Info
+    };
+
     // Create logger
     let logger = Box::new(ConsoleLogger::new(log_level));
-    
+
     // Load configuration
     let config = match cli.config {
         Some(ref path) => Config::load_from_file(path)?,
         None => Config::load_default()?,
     };
-    
+
     // Create and initialize the application
     let mut app = App::new(config, logger);
     app.initialize()?;
-    
+
     // Execute the requested command
     app.execute_command(cli.command)
-} 
+}

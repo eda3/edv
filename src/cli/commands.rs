@@ -3,13 +3,12 @@
 /// This module defines the command trait that all edv commands must implement,
 /// as well as the command registry that manages available commands. It serves
 /// as the core abstraction for command execution in the application.
-
 use std::collections::HashMap;
 use std::fmt::Debug;
 
 use crate::core::Context;
 
-use super::{Result, Error};
+use super::{Error, Result};
 
 /// Trait that all commands must implement.
 ///
@@ -21,17 +20,17 @@ pub trait Command: Send + Sync + Debug {
     ///
     /// This name is used for command registration and lookup.
     fn name(&self) -> &str;
-    
+
     /// Gets a human-readable description of the command.
     ///
     /// This description is used for help text and documentation.
     fn description(&self) -> &str;
-    
+
     /// Gets usage examples for the command.
     ///
     /// These examples are displayed in help text to guide users.
     fn usage(&self) -> &str;
-    
+
     /// Executes the command with the given context and arguments.
     ///
     /// # Arguments
@@ -67,7 +66,7 @@ impl CommandRegistry {
             commands: HashMap::new(),
         }
     }
-    
+
     /// Registers a command with the registry.
     ///
     /// # Arguments
@@ -83,15 +82,15 @@ impl CommandRegistry {
     /// Returns an error if a command with the same name is already registered.
     pub fn register(&mut self, command: Box<dyn Command>) -> Result<()> {
         let name = command.name().to_string();
-        
+
         if self.commands.contains_key(&name) {
             return Err(Error::DuplicateCommand(name));
         }
-        
+
         self.commands.insert(name, command);
         Ok(())
     }
-    
+
     /// Gets a command by name.
     ///
     /// # Arguments
@@ -106,11 +105,12 @@ impl CommandRegistry {
     ///
     /// Returns an error if no command with the given name is registered.
     pub fn get(&self, name: &str) -> Result<&dyn Command> {
-        self.commands.get(name)
+        self.commands
+            .get(name)
             .map(AsRef::as_ref)
             .ok_or_else(|| Error::UnknownCommand(name.to_string()))
     }
-    
+
     /// Gets a list of all registered commands.
     ///
     /// # Returns
@@ -118,11 +118,9 @@ impl CommandRegistry {
     /// A vector of references to all registered commands.
     #[must_use]
     pub fn list(&self) -> Vec<&dyn Command> {
-        self.commands.values()
-            .map(AsRef::as_ref)
-            .collect()
+        self.commands.values().map(AsRef::as_ref).collect()
     }
-    
+
     /// Gets a list of all command names.
     ///
     /// # Returns
@@ -130,11 +128,9 @@ impl CommandRegistry {
     /// A vector of command names.
     #[must_use]
     pub fn command_names(&self) -> Vec<String> {
-        self.commands.keys()
-            .cloned()
-            .collect()
+        self.commands.keys().cloned().collect()
     }
-    
+
     /// Checks if a command with the given name is registered.
     ///
     /// # Arguments
@@ -148,7 +144,7 @@ impl CommandRegistry {
     pub fn has_command(&self, name: &str) -> bool {
         self.commands.contains_key(name)
     }
-    
+
     /// Gets the number of registered commands.
     ///
     /// # Returns
@@ -163,7 +159,7 @@ impl CommandRegistry {
 #[cfg(test)]
 mod tests {
     use super::*;
-    
+
     /// Mock command for testing
     #[derive(Debug)]
     struct MockCommand {
@@ -171,26 +167,26 @@ mod tests {
         description: String,
         usage: String,
     }
-    
+
     impl Command for MockCommand {
         fn name(&self) -> &str {
             &self.name
         }
-        
+
         fn description(&self) -> &str {
             &self.description
         }
-        
+
         fn usage(&self) -> &str {
             &self.usage
         }
-        
+
         fn execute(&self, _context: &Context, _args: &[String]) -> Result<()> {
             // Mock implementation that does nothing
             Ok(())
         }
     }
-    
+
     impl MockCommand {
         fn new(name: &str, description: &str, usage: &str) -> Self {
             Self {
@@ -200,71 +196,71 @@ mod tests {
             }
         }
     }
-    
+
     #[test]
     fn test_register_and_get_command() {
         let mut registry = CommandRegistry::new();
         let command = MockCommand::new("test", "Test command", "test --arg value");
         let command_name = command.name().to_string();
-        
+
         // Register the command
         registry.register(Box::new(command)).unwrap();
-        
+
         // Verify command is in registry
         assert!(registry.has_command(&command_name));
         assert_eq!(registry.command_count(), 1);
-        
+
         // Get the command
         let cmd = registry.get(&command_name).unwrap();
         assert_eq!(cmd.name(), "test");
         assert_eq!(cmd.description(), "Test command");
         assert_eq!(cmd.usage(), "test --arg value");
     }
-    
+
     #[test]
     fn test_duplicate_command_registration() {
         let mut registry = CommandRegistry::new();
         let command1 = MockCommand::new("test", "First test command", "test1");
         let command2 = MockCommand::new("test", "Second test command", "test2");
-        
+
         // Register the first command
         registry.register(Box::new(command1)).unwrap();
-        
+
         // Try to register a command with the same name
         let result = registry.register(Box::new(command2));
         assert!(result.is_err());
-        
+
         // Ensure only one command is registered
         assert_eq!(registry.command_count(), 1);
     }
-    
+
     #[test]
     fn test_unknown_command() {
         let registry = CommandRegistry::new();
-        
+
         // Try to get a non-existent command
         let result = registry.get("nonexistent");
         assert!(result.is_err());
     }
-    
+
     #[test]
     fn test_list_commands() {
         let mut registry = CommandRegistry::new();
         let command1 = MockCommand::new("test1", "First test command", "test1");
         let command2 = MockCommand::new("test2", "Second test command", "test2");
-        
+
         // Register commands
         registry.register(Box::new(command1)).unwrap();
         registry.register(Box::new(command2)).unwrap();
-        
+
         // List commands
         let commands = registry.list();
         assert_eq!(commands.len(), 2);
-        
+
         // Get command names
         let names = registry.command_names();
         assert_eq!(names.len(), 2);
         assert!(names.contains(&"test1".to_string()));
         assert!(names.contains(&"test2".to_string()));
     }
-} 
+}

@@ -20,10 +20,17 @@
 /// ```
 // Export modules
 pub mod audio;
+pub mod cli;
+pub mod core;
 pub mod ffmpeg;
+pub mod processing;
+pub mod project;
 pub mod subtitle;
+pub mod utility;
 
 // Reexport main types for convenience
 pub use audio::error::{Error as AudioError, Result as AudioResult};
+pub use core::{Error as CoreError, Result as CoreResult};
 pub use ffmpeg::error::{Error as FFmpegError, Result as FFmpegResult};
+pub use project::{Project, ProjectError, Result as ProjectResult};
 pub use subtitle::error::{Error as SubtitleError, Result as SubtitleResult};

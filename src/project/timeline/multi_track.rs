@@ -6,8 +6,8 @@
 use std::collections::{HashMap, HashSet};
 use std::fmt;
 
-use crate::project::timeline::{Clip, Timeline, Track, TrackId, TrackKind};
-use crate::utility::time::{Duration, TimePosition};
+#[allow(unused_imports)]
+use crate::project::timeline::{Timeline, Track, TrackId, TrackKind};
 
 /// Error types specific to multi-track operations.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -123,13 +123,13 @@ impl MultiTrackManager {
         // Update dependencies
         self.dependencies
             .entry(source_id)
-            .or_insert_with(HashMap::new)
+            .or_default()
             .insert(target_id, relationship);
 
         // Update reverse dependencies
         self.reverse_dependencies
             .entry(target_id)
-            .or_insert_with(HashSet::new)
+            .or_default()
             .insert(source_id);
 
         Ok(())
@@ -382,9 +382,9 @@ impl MultiTrackManager {
     // Helper method to synchronize locked tracks
     fn synchronize_locked_tracks(
         &self,
-        source_id: TrackId,
-        target_id: TrackId,
-        timeline: &mut Timeline,
+        _source_id: TrackId,
+        _target_id: TrackId,
+        _timeline: &mut Timeline,
     ) -> Result<()> {
         // Implementation for synchronizing locked tracks
         // This is a placeholder - actual implementation would depend on specific requirements
@@ -394,9 +394,9 @@ impl MultiTrackManager {
     // Helper method to update timing-dependent tracks
     fn update_timing_dependent_track(
         &self,
-        source_id: TrackId,
-        target_id: TrackId,
-        timeline: &mut Timeline,
+        _source_id: TrackId,
+        _target_id: TrackId,
+        _timeline: &mut Timeline,
     ) -> Result<()> {
         // Implementation for updating timing-dependent tracks
         // This is a placeholder - actual implementation would depend on specific requirements
@@ -406,13 +406,61 @@ impl MultiTrackManager {
     // Helper method to update visibility-dependent tracks
     fn update_visibility_dependent_track(
         &self,
-        source_id: TrackId,
-        target_id: TrackId,
-        timeline: &mut Timeline,
+        _source_id: TrackId,
+        _target_id: TrackId,
+        _timeline: &mut Timeline,
     ) -> Result<()> {
         // Implementation for updating visibility-dependent tracks
         // This is a placeholder - actual implementation would depend on specific requirements
         Ok(())
+    }
+
+    /// Propagates visibility changes from source to target
+    ///
+    /// # Arguments
+    ///
+    /// * `source_id` - The ID of the source track
+    /// * `target_id` - The ID of the target track
+    /// * `timeline` - The timeline containing the tracks
+    pub fn propagate_visibility_changes(
+        &self,
+        _source_id: TrackId,
+        _target_id: TrackId,
+        _timeline: &mut Timeline,
+    ) {
+        // Implementation to be added
+    }
+
+    /// Propagates timing changes from source to target
+    ///
+    /// # Arguments
+    ///
+    /// * `source_id` - The ID of the source track
+    /// * `target_id` - The ID of the target track
+    /// * `timeline` - The timeline containing the tracks
+    pub fn propagate_timing_changes(
+        &self,
+        _source_id: TrackId,
+        _target_id: TrackId,
+        _timeline: &mut Timeline,
+    ) {
+        // Implementation to be added
+    }
+
+    /// Propagates edit operations from source to target
+    ///
+    /// # Arguments
+    ///
+    /// * `source_id` - The ID of the source track
+    /// * `target_id` - The ID of the target track
+    /// * `timeline` - The timeline containing the tracks
+    pub fn propagate_edits(
+        &self,
+        _source_id: TrackId,
+        _target_id: TrackId,
+        _timeline: &mut Timeline,
+    ) {
+        // Implementation to be added
     }
 }
 
