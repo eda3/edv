@@ -230,7 +230,7 @@ where
     cmd.input(video);
 
     // Add replacement audio with offset if needed
-    if options.offset != 0.0 {
+    if options.offset.abs() > 0.0 {
         cmd.input_options(["-ss", &options.offset.to_string()])
             .input(audio);
     } else {
