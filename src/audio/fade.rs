@@ -2,25 +2,24 @@
 ///
 /// This module provides functions for applying fade-in and fade-out effects to audio
 /// tracks in video files, allowing for smooth transitions.
-
 use std::path::Path;
 
-use crate::ffmpeg::{FFmpeg, command::FFmpegCommand};
-use crate::audio::error::{Result, Error};
 use crate::audio::common;
+use crate::audio::error::{Error, Result};
+use crate::ffmpeg::{FFmpeg, command::FFmpegCommand};
 
 /// Types of audio fade effects.
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub enum FadeType {
     /// Linear fade (constant amplitude change)
     Linear,
-    
+
     /// Exponential fade (logarithmic amplitude change, sounds more natural)
     Exponential,
-    
+
     /// Sinusoidal (sine curve-based fade)
     Sinusoidal,
-    
+
     /// Logarithmic fade
     Logarithmic,
 }
@@ -43,13 +42,13 @@ impl FadeType {
 pub struct FadeOptions {
     /// Whether to preserve the video quality (no re-encoding)
     pub preserve_video: bool,
-    
+
     /// The audio codec to use for output
     pub audio_codec: String,
-    
+
     /// The bitrate for output audio
     pub audio_bitrate: String,
-    
+
     /// The sample rate for output audio
     pub sample_rate: u32,
 }
@@ -60,7 +59,7 @@ impl Default for FadeOptions {
             preserve_video: true,
             audio_codec: common::DEFAULT_AUDIO_CODEC.to_string(),
             audio_bitrate: common::DEFAULT_AUDIO_BITRATE.to_string(),
-            sample_rate: common::DEFAULT_AUDIO_SAMPLE_RATE,
+            sample_rate: common::DEFAULT_SAMPLE_RATE,
         }
     }
 }
@@ -71,31 +70,31 @@ impl FadeOptions {
     pub fn new() -> Self {
         Self::default()
     }
-    
+
     /// Sets whether to preserve the video quality.
     #[must_use]
     pub fn preserve_video(mut self, preserve: bool) -> Self {
         self.preserve_video = preserve;
         self
     }
-    
-    /// Sets the audio codec for the output.
+
+    /// Sets the audio codec.
     #[must_use]
     pub fn audio_codec(mut self, codec: &str) -> Self {
         let codec = codec.to_lowercase();
-        if common::is_supported_audio_format(&codec) {
+        if common::is_supported_format(&codec) {
             self.audio_codec = codec;
         }
         self
     }
-    
+
     /// Sets the audio bitrate for the output.
     #[must_use]
     pub fn audio_bitrate(mut self, bitrate: &str) -> Self {
         self.audio_bitrate = bitrate.to_string();
         self
     }
-    
+
     /// Sets the audio sample rate for the output.
     #[must_use]
     pub fn sample_rate(mut self, rate: u32) -> Self {
@@ -137,26 +136,35 @@ where
     if duration <= 0.0 {
         return Err(Error::InvalidFadeDuration(duration));
     }
-    
-    let fade_filter = format!("afade=t=in:st=0:d={}:curve={}", 
-                            duration, fade_type.as_ffmpeg_string());
-    
+
+    let fade_filter = format!(
+        "afade=t=in:st=0:d={}:curve={}",
+        duration,
+        fade_type.as_ffmpeg_string()
+    );
+
     let mut cmd = FFmpegCommand::new(ffmpeg);
-    cmd.input(input)
-       .output_options(&[
-           "-filter:a", &fade_filter,
-           "-c:a", &options.audio_codec,
-           "-b:a", &options.audio_bitrate,
-           "-ar", &options.sample_rate.to_string(),
-       ]);
-       
+
+    // 出力オプションを所有型の文字列で構築
+    let mut output_options = Vec::new();
+    output_options.push("-filter:a".to_string());
+    output_options.push(fade_filter);
+    output_options.push("-c:a".to_string());
+    output_options.push(options.audio_codec.clone());
+    output_options.push("-b:a".to_string());
+    output_options.push(options.audio_bitrate.clone());
+    output_options.push("-ar".to_string());
+    output_options.push(options.sample_rate.to_string());
+
+    cmd.input(input).output_options(&output_options);
+
     if options.preserve_video {
-        cmd.output_options(&["-c:v", "copy"]);
+        let video_options = vec!["-c:v".to_string(), "copy".to_string()];
+        cmd.output_options(&video_options);
     }
-    
-    cmd.output(output)
-       .overwrite(true);
-    
+
+    cmd.output(output).overwrite(true);
+
     cmd.execute().map_err(Error::from)
 }
 
@@ -193,34 +201,44 @@ where
     if duration <= 0.0 {
         return Err(Error::InvalidFadeDuration(duration));
     }
-    
+
     // Get the duration of the input file
     let file_duration = get_duration(&ffmpeg, input.as_ref())?;
-    
+
     let start_time = file_duration - duration;
     if start_time < 0.0 {
         return Err(Error::InvalidFadeDuration(duration));
     }
-    
-    let fade_filter = format!("afade=t=out:st={}:d={}:curve={}", 
-                            start_time, duration, fade_type.as_ffmpeg_string());
-    
+
+    let fade_filter = format!(
+        "afade=t=out:st={}:d={}:curve={}",
+        start_time,
+        duration,
+        fade_type.as_ffmpeg_string()
+    );
+
     let mut cmd = FFmpegCommand::new(ffmpeg);
-    cmd.input(input)
-       .output_options(&[
-           "-filter:a", &fade_filter,
-           "-c:a", &options.audio_codec,
-           "-b:a", &options.audio_bitrate,
-           "-ar", &options.sample_rate.to_string(),
-       ]);
-       
+
+    // 出力オプションを所有型の文字列で構築
+    let mut output_options = Vec::new();
+    output_options.push("-filter:a".to_string());
+    output_options.push(fade_filter);
+    output_options.push("-c:a".to_string());
+    output_options.push(options.audio_codec.clone());
+    output_options.push("-b:a".to_string());
+    output_options.push(options.audio_bitrate.clone());
+    output_options.push("-ar".to_string());
+    output_options.push(options.sample_rate.to_string());
+
+    cmd.input(input).output_options(&output_options);
+
     if options.preserve_video {
-        cmd.output_options(&["-c:v", "copy"]);
+        let video_options = vec!["-c:v".to_string(), "copy".to_string()];
+        cmd.output_options(&video_options);
     }
-    
-    cmd.output(output)
-       .overwrite(true);
-    
+
+    cmd.output(output).overwrite(true);
+
     cmd.execute().map_err(Error::from)
 }
 
@@ -257,42 +275,50 @@ where
     P2: AsRef<Path>,
 {
     if fade_in_duration <= 0.0 || fade_out_duration <= 0.0 {
-        return Err(Error::InvalidFadeDuration(fade_in_duration.min(fade_out_duration)));
-    }
-    
-    // Get the duration of the input file
-    let file_duration = get_duration(&ffmpeg, input.as_ref())?;
-    
-    let fade_out_start = file_duration - fade_out_duration;
-    if fade_out_start <= fade_in_duration {
-        return Err(Error::ProcessingError(
-            format!("File is too short ({file_duration}s) for both fade-in ({fade_in_duration}s) and fade-out ({fade_out_duration}s)")
+        return Err(Error::InvalidFadeDuration(
+            fade_in_duration.min(fade_out_duration),
         ));
     }
-    
+
+    // Get the duration of the input file
+    let file_duration = get_duration(&ffmpeg, input.as_ref())?;
+
+    let fade_out_start = file_duration - fade_out_duration;
+    if fade_out_start <= fade_in_duration {
+        return Err(Error::ProcessingError(format!(
+            "File is too short ({file_duration}s) for both fade-in ({fade_in_duration}s) and fade-out ({fade_out_duration}s)"
+        )));
+    }
+
     // Build both fade operations in one filter
     let curve = fade_type.as_ffmpeg_string();
     let fade_filter = format!(
-        "afade=t=in:st=0:d={}:curve={},afade=t=out:st={}:d={}:curve={}", 
+        "afade=t=in:st=0:d={}:curve={},afade=t=out:st={}:d={}:curve={}",
         fade_in_duration, curve, fade_out_start, fade_out_duration, curve
     );
-    
+
     let mut cmd = FFmpegCommand::new(ffmpeg);
-    cmd.input(input)
-       .output_options(&[
-           "-filter:a", &fade_filter,
-           "-c:a", &options.audio_codec,
-           "-b:a", &options.audio_bitrate,
-           "-ar", &options.sample_rate.to_string(),
-       ]);
-       
+
+    // 出力オプションを所有型の文字列で構築
+    let mut output_options = Vec::new();
+    output_options.push("-filter:a".to_string());
+    output_options.push(fade_filter);
+    output_options.push("-c:a".to_string());
+    output_options.push(options.audio_codec.clone());
+    output_options.push("-b:a".to_string());
+    output_options.push(options.audio_bitrate.clone());
+    output_options.push("-ar".to_string());
+    output_options.push(options.sample_rate.to_string());
+
+    cmd.input(input).output_options(&output_options);
+
     if options.preserve_video {
-        cmd.output_options(&["-c:v", "copy"]);
+        let video_options = vec!["-c:v".to_string(), "copy".to_string()];
+        cmd.output_options(&video_options);
     }
-    
-    cmd.output(output)
-       .overwrite(true);
-    
+
+    cmd.output(output).overwrite(true);
+
     cmd.execute().map_err(Error::from)
 }
 
@@ -331,74 +357,99 @@ where
     if segments.is_empty() {
         return Err(Error::ProcessingError("No segments specified".to_string()));
     }
-    
+
     if fade_duration <= 0.0 {
         return Err(Error::InvalidFadeDuration(fade_duration));
     }
-    
+
     // Build a complex filter for applying fades to segments
     let mut filter_complex = String::new();
-    
+
     // Create filter for each segment
     for (i, (start, duration, fade_in, fade_out)) in segments.iter().enumerate() {
         if *start < 0.0 || *duration <= 0.0 {
-            return Err(Error::ProcessingError(
-                format!("Invalid segment {}: start={}, duration={}", i, start, duration)
-            ));
+            return Err(Error::ProcessingError(format!(
+                "Invalid segment {}: start={}, duration={}",
+                i, start, duration
+            )));
         }
-        
+
         if *fade_in && *fade_out && *duration <= 2.0 * fade_duration {
-            return Err(Error::ProcessingError(
-                format!("Segment {} is too short for both fade-in and fade-out", i)
-            ));
+            return Err(Error::ProcessingError(format!(
+                "Segment {} is too short for both fade-in and fade-out",
+                i
+            )));
         }
-        
-        filter_complex.push_str(&format!("[0:a]atrim=start={}:duration={},asetpts=PTS-STARTPTS", start, duration));
-        
+
+        filter_complex.push_str(&format!(
+            "[0:a]atrim=start={}:duration={},asetpts=PTS-STARTPTS",
+            start, duration
+        ));
+
         // Apply fade-in if requested
         if *fade_in {
             filter_complex.push_str(&format!(
-                ",afade=t=in:st=0:d={}:curve={}", 
-                fade_duration, fade_type.as_ffmpeg_string()
+                ",afade=t=in:st=0:d={}:curve={}",
+                fade_duration,
+                fade_type.as_ffmpeg_string()
             ));
         }
-        
+
         // Apply fade-out if requested
         if *fade_out {
             filter_complex.push_str(&format!(
-                ",afade=t=out:st={}:d={}:curve={}", 
-                duration - fade_duration, fade_duration, fade_type.as_ffmpeg_string()
+                ",afade=t=out:st={}:d={}:curve={}",
+                duration - fade_duration,
+                fade_duration,
+                fade_type.as_ffmpeg_string()
             ));
         }
-        
+
         filter_complex.push_str(&format!("[a{}];", i));
     }
-    
+
     // Concatenate all segments
     filter_complex.push_str(&format!(
         "{}concat=n={}:v=0:a=1[outa]",
-        segments.iter().enumerate().map(|(i, _)| format!("[a{}]", i)).collect::<Vec<_>>().join(""),
+        segments
+            .iter()
+            .enumerate()
+            .map(|(i, _)| format!("[a{}]", i))
+            .collect::<Vec<_>>()
+            .join(""),
         segments.len()
     ));
-    
+
     // Build the command
     let mut cmd = FFmpegCommand::new(ffmpeg);
+
+    // 出力オプションを所有型の文字列で構築
+    let mut audio_options = Vec::new();
+    audio_options.push("-map".to_string());
+    audio_options.push("[outa]".to_string());
+    audio_options.push("-c:a".to_string());
+    audio_options.push(options.audio_codec.clone());
+    audio_options.push("-b:a".to_string());
+    audio_options.push(options.audio_bitrate.clone());
+    audio_options.push("-ar".to_string());
+    audio_options.push(options.sample_rate.to_string());
+
     cmd.input(input)
-       .filter_complex(&filter_complex)
-       .output_options(&[
-           "-map", "[outa]",
-           "-c:a", &options.audio_codec,
-           "-b:a", &options.audio_bitrate,
-           "-ar", &options.sample_rate.to_string(),
-       ]);
-       
+        .filter_complex(&filter_complex)
+        .output_options(&audio_options);
+
     if options.preserve_video {
-        cmd.output_options(&["-map", "0:v", "-c:v", "copy"]);
+        let video_options = vec![
+            "-map".to_string(),
+            "0:v".to_string(),
+            "-c:v".to_string(),
+            "copy".to_string(),
+        ];
+        cmd.output_options(&video_options);
     }
-    
-    cmd.output(output)
-       .overwrite(true);
-    
+
+    cmd.output(output).overwrite(true);
+
     cmd.execute().map_err(Error::from)
 }
 
@@ -411,7 +462,7 @@ where
     // 1. Run ffprobe to get file duration
     // 2. Parse the output to extract the duration value
     // 3. Return the duration in seconds
-    
+
     // For now, we'll return a dummy value
     // In a real implementation, you would remove this and implement proper duration detection
     Ok(60.0)
@@ -420,7 +471,7 @@ where
 #[cfg(test)]
 mod tests {
     use super::*;
-    
+
     #[test]
     fn test_fade_type_conversions() {
         assert_eq!(FadeType::Linear.as_ffmpeg_string(), "t");
@@ -428,16 +479,16 @@ mod tests {
         assert_eq!(FadeType::Sinusoidal.as_ffmpeg_string(), "sin");
         assert_eq!(FadeType::Logarithmic.as_ffmpeg_string(), "log");
     }
-    
+
     #[test]
     fn test_fade_options_defaults() {
         let options = FadeOptions::default();
         assert!(options.preserve_video);
         assert_eq!(options.audio_codec, common::DEFAULT_AUDIO_CODEC);
         assert_eq!(options.audio_bitrate, common::DEFAULT_AUDIO_BITRATE);
-        assert_eq!(options.sample_rate, common::DEFAULT_AUDIO_SAMPLE_RATE);
+        assert_eq!(options.sample_rate, common::DEFAULT_SAMPLE_RATE);
     }
-    
+
     #[test]
     fn test_fade_options_fluent_api() {
         let options = FadeOptions::new()
@@ -445,10 +496,10 @@ mod tests {
             .audio_codec("mp3")
             .audio_bitrate("320k")
             .sample_rate(48000);
-        
+
         assert!(!options.preserve_video);
         assert_eq!(options.audio_codec, "mp3");
         assert_eq!(options.audio_bitrate, "320k");
         assert_eq!(options.sample_rate, 48000);
     }
-} 
+}

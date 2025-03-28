@@ -1,20 +1,19 @@
+use std::error::Error as StdError;
 /// FFmpeg integration for the edv video editor.
 ///
 /// This module provides functionality for detecting, validating, and
-/// interacting with FFmpeg. It serves as the core abstraction layer between 
+/// interacting with FFmpeg. It serves as the core abstraction layer between
 /// the application and FFmpeg, handling command construction, execution, and
 /// result parsing.
-
 use std::fmt::{self, Display};
 use std::path::{Path, PathBuf};
 use std::process::Command;
 use std::str::FromStr;
 use std::{env, io};
-use std::error::Error as StdError;
 use thiserror::Error;
 
 // Submodules
-// pub mod command;
+pub mod command;
 pub mod error;
 
 /// Errors that can occur in the FFmpeg module.
@@ -99,7 +98,11 @@ impl Version {
     /// A new `Version` instance.
     #[must_use]
     pub fn new(major: u32, minor: u32, patch: u32) -> Self {
-        Self { major, minor, patch }
+        Self {
+            major,
+            minor,
+            patch,
+        }
     }
 }
 
@@ -134,21 +137,20 @@ impl FromStr for Version {
         }
 
         let parse_component = |idx: usize, name: &str| {
-            parts[idx]
-                .parse::<u32>()
-                .map_err(|_| {
-                    Error::OutputParseError(format!(
-                        "Invalid {name} version component: {}",
-                        parts[idx]
-                    ))
-                })
+            parts[idx].parse::<u32>().map_err(|_| {
+                Error::OutputParseError(format!("Invalid {name} version component: {}", parts[idx]))
+            })
         };
 
         let major = parse_component(0, "major")?;
         let minor = parse_component(1, "minor")?;
         let patch = parse_component(2, "patch")?;
 
-        Ok(Self { major, minor, patch })
+        Ok(Self {
+            major,
+            minor,
+            patch,
+        })
     }
 }
 
@@ -273,12 +275,16 @@ impl FFmpeg {
     /// Returns an error if FFmpeg is not found in PATH or not compatible.
     fn detect_in_path() -> Result<Self> {
         // Try to find ffmpeg in PATH
-        let ffmpeg_name = if cfg!(windows) { "ffmpeg.exe" } else { "ffmpeg" };
-        
+        let ffmpeg_name = if cfg!(windows) {
+            "ffmpeg.exe"
+        } else {
+            "ffmpeg"
+        };
+
         if let Ok(path) = which::which(ffmpeg_name) {
             return Self::detect_at_path(path);
         }
-        
+
         Err(Error::NotFound)
     }
 
@@ -293,7 +299,7 @@ impl FFmpeg {
     /// Returns an error if FFmpeg is not found in common locations or not compatible.
     fn detect_in_common_locations() -> Result<Self> {
         let common_locations = Self::get_common_locations();
-        
+
         for location in common_locations {
             if location.exists() {
                 match Self::detect_at_path(&location) {
@@ -302,7 +308,7 @@ impl FFmpeg {
                 }
             }
         }
-        
+
         Err(Error::NotFound)
     }
 
@@ -314,14 +320,24 @@ impl FFmpeg {
     #[must_use]
     fn get_common_locations() -> Vec<PathBuf> {
         let mut locations = Vec::new();
-        
+
         if cfg!(windows) {
             // Windows common locations
             if let Some(program_files) = env::var_os("ProgramFiles") {
-                locations.push(PathBuf::from(program_files).join("FFmpeg").join("bin").join("ffmpeg.exe"));
+                locations.push(
+                    PathBuf::from(program_files)
+                        .join("FFmpeg")
+                        .join("bin")
+                        .join("ffmpeg.exe"),
+                );
             }
             if let Some(program_files_x86) = env::var_os("ProgramFiles(x86)") {
-                locations.push(PathBuf::from(program_files_x86).join("FFmpeg").join("bin").join("ffmpeg.exe"));
+                locations.push(
+                    PathBuf::from(program_files_x86)
+                        .join("FFmpeg")
+                        .join("bin")
+                        .join("ffmpeg.exe"),
+                );
             }
             locations.push(PathBuf::from(r"C:\FFmpeg\bin\ffmpeg.exe"));
         } else if cfg!(target_os = "macos") {
@@ -335,7 +351,7 @@ impl FFmpeg {
             locations.push(PathBuf::from("/usr/local/bin/ffmpeg"));
             locations.push(PathBuf::from("/opt/ffmpeg/bin/ffmpeg"));
         }
-        
+
         locations
     }
 
@@ -357,14 +373,14 @@ impl FFmpeg {
             .arg("-version")
             .output()
             .map_err(|e| Error::ExecutionError(format!("Failed to execute FFmpeg: {e}")))?;
-        
+
         if !output.status.success() {
             return Err(Error::ExecutionError(format!(
                 "FFmpeg returned error code: {}",
                 output.status
             )));
         }
-        
+
         let output_str = String::from_utf8_lossy(&output.stdout);
         Self::parse_version_from_output(&output_str)
     }
@@ -385,18 +401,15 @@ impl FFmpeg {
     fn parse_version_from_output(output: &str) -> Result<Version> {
         // FFmpeg version output follows a pattern like:
         // ffmpeg version 4.3.2 Copyright (c) 2000-2021 ...
-        
+
         let version_line = output.lines().next().ok_or_else(|| {
             Error::OutputParseError("Empty output from FFmpeg -version".to_string())
         })?;
-        
-        let version_str = version_line
-            .split_whitespace()
-            .nth(2)
-            .ok_or_else(|| {
-                Error::OutputParseError(format!("Unexpected FFmpeg version output: {version_line}"))
-            })?;
-        
+
+        let version_str = version_line.split_whitespace().nth(2).ok_or_else(|| {
+            Error::OutputParseError(format!("Unexpected FFmpeg version output: {version_line}"))
+        })?;
+
         version_str.parse()
     }
 
@@ -416,19 +429,17 @@ impl FFmpeg {
                 required: Self::MIN_VERSION,
             });
         }
-        
+
         // Try to run a simple command to ensure FFmpeg is working
-        let output = Command::new(&self.path)
-            .arg("-version")
-            .output()?;
-        
+        let output = Command::new(&self.path).arg("-version").output()?;
+
         if !output.status.success() {
             return Err(Error::ExecutionError(format!(
                 "FFmpeg validation failed with status: {}",
                 output.status
             )));
         }
-        
+
         Ok(())
     }
 }
@@ -436,57 +447,51 @@ impl FFmpeg {
 #[cfg(test)]
 mod tests {
     use super::*;
-    
+
     #[test]
     fn test_version_parsing() {
-        assert_eq!(
-            "4.3.2".parse::<Version>().unwrap(),
-            Version::new(4, 3, 2)
-        );
-        
-        assert_eq!(
-            "5.0.0".parse::<Version>().unwrap(),
-            Version::new(5, 0, 0)
-        );
-        
+        assert_eq!("4.3.2".parse::<Version>().unwrap(), Version::new(4, 3, 2));
+
+        assert_eq!("5.0.0".parse::<Version>().unwrap(), Version::new(5, 0, 0));
+
         // Test invalid formats
         assert!("4.3".parse::<Version>().is_err());
         assert!("invalid".parse::<Version>().is_err());
         assert!("4.a.2".parse::<Version>().is_err());
     }
-    
+
     #[test]
     fn test_version_display() {
         let version = Version::new(4, 3, 2);
         assert_eq!(version.to_string(), "4.3.2");
     }
-    
+
     #[test]
     fn test_version_comparison() {
         let v1 = Version::new(4, 3, 2);
         let v2 = Version::new(5, 0, 0);
         let v3 = Version::new(4, 3, 2);
         let v4 = Version::new(4, 3, 1);
-        
+
         assert!(v1 < v2);
         assert!(v2 > v1);
         assert_eq!(v1, v3);
         assert!(v1 > v4);
     }
-    
+
     #[test]
     fn test_parse_version_from_output() {
         // Test with a typical FFmpeg version output
         let output = "ffmpeg version 4.3.2 Copyright (c) 2000-2021 the FFmpeg developers";
         let version = FFmpeg::parse_version_from_output(output).unwrap();
         assert_eq!(version, Version::new(4, 3, 2));
-        
+
         // Test with a different format
         let output = "ffmpeg version n4.4 Copyright (c) 2000-2021 the FFmpeg developers";
         assert!(FFmpeg::parse_version_from_output(output).is_err());
-        
+
         // Test with invalid output
         let output = "not a valid ffmpeg output";
         assert!(FFmpeg::parse_version_from_output(output).is_err());
     }
-} 
+}

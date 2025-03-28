@@ -2,7 +2,6 @@
 ///
 /// This module defines the supported subtitle formats and provides
 /// utilities for format detection and conversion.
-
 use std::fmt;
 use std::path::Path;
 use std::str::FromStr;
@@ -14,22 +13,22 @@ use crate::subtitle::error::{Error, Result};
 pub enum SubtitleFormat {
     /// SubRip Text format (.srt)
     Srt,
-    
+
     /// WebVTT format (.vtt)
     Vtt,
-    
+
     /// WebVTT format (.vtt) - 別名
     WebVtt,
-    
+
     /// Advanced SubStation Alpha (.ass, .ssa)
     Ass,
-    
+
     /// Advanced SubStation Alpha (.ass, .ssa) - 別名
     AdvancedSsa,
-    
+
     /// SubViewer format (.sub)
     SubViewer,
-    
+
     /// MicroDVD format (.sub)
     MicroDVD,
 }
@@ -46,7 +45,7 @@ impl SubtitleFormat {
             Self::MicroDVD => "sub",
         }
     }
-    
+
     /// Returns the MIME type for this subtitle format.
     #[must_use]
     pub fn mime_type(&self) -> &'static str {
@@ -58,7 +57,7 @@ impl SubtitleFormat {
             Self::MicroDVD => "text/x-sub",
         }
     }
-    
+
     /// Detects the subtitle format from a file extension.
     ///
     /// # Arguments
@@ -78,7 +77,7 @@ impl SubtitleFormat {
             .extension()
             .and_then(|e| e.to_str())
             .map(|e| e.to_lowercase());
-            
+
         match extension.as_deref() {
             Some("srt") => Ok(Self::Srt),
             Some("vtt") => Ok(Self::WebVtt),
@@ -89,12 +88,13 @@ impl SubtitleFormat {
                 // For now, default to SubViewer
                 Ok(Self::SubViewer)
             }
-            _ => Err(Error::format_error(
-                format!("Unsupported subtitle extension: {:?}", extension)
-            )),
+            _ => Err(Error::formatting_error(format!(
+                "Unsupported subtitle extension: {:?}",
+                extension
+            ))),
         }
     }
-    
+
     /// Attempts to detect the subtitle format from file content.
     ///
     /// # Arguments
@@ -113,12 +113,12 @@ impl SubtitleFormat {
         if content.trim_start().starts_with("WEBVTT") {
             return Ok(Self::WebVtt);
         }
-        
+
         // Check for ASS/SSA signature
         if content.trim_start().starts_with("[Script Info]") {
             return Ok(Self::AdvancedSsa);
         }
-        
+
         // Check for MicroDVD format (starts with frame numbers in curly braces)
         if content.trim_start().starts_with('{') {
             let first_line = content.lines().next().unwrap_or_default();
@@ -127,7 +127,7 @@ impl SubtitleFormat {
                 return Ok(Self::MicroDVD);
             }
         }
-        
+
         // Check for SubRip format (starts with a number followed by timecodes)
         let lines: Vec<&str> = content.lines().take(4).collect();
         if lines.len() >= 3 {
@@ -139,16 +139,18 @@ impl SubtitleFormat {
                 }
             }
         }
-        
+
         // Check for SubViewer format (starts with timecodes)
         if content.contains("[INFORMATION]") || content.lines().any(|line| line.contains(":")) {
             return Ok(Self::SubViewer);
         }
-        
+
         // Default to SRT if we can't determine the format
-        Err(Error::format_error("Could not determine subtitle format from content"))
+        Err(Error::formatting_error(
+            "Could not determine subtitle format from content",
+        ))
     }
-    
+
     /// Checks if a file extension is supported for subtitles.
     ///
     /// # Arguments
@@ -184,7 +186,7 @@ impl fmt::Display for SubtitleFormat {
 
 impl FromStr for SubtitleFormat {
     type Err = Error;
-    
+
     fn from_str(s: &str) -> Result<Self> {
         match s.to_lowercase().as_str() {
             "srt" | "subrip" => Ok(Self::Srt),
@@ -192,7 +194,10 @@ impl FromStr for SubtitleFormat {
             "ass" | "ssa" => Ok(Self::AdvancedSsa),
             "subviewer" | "sub" => Ok(Self::SubViewer),
             "microdvd" => Ok(Self::MicroDVD),
-            _ => Err(Error::format_error(format!("Unsupported subtitle format: {}", s))),
+            _ => Err(Error::formatting_error(format!(
+                "Unsupported subtitle format: {}",
+                s
+            ))),
         }
     }
 }
@@ -233,7 +238,7 @@ impl TimePosition {
         assert!(minutes < 60, "Minutes must be 0-59");
         assert!(seconds < 60, "Seconds must be 0-59");
         assert!(milliseconds < 1000, "Milliseconds must be 0-999");
-        
+
         Self {
             hours,
             minutes,
@@ -241,7 +246,7 @@ impl TimePosition {
             milliseconds,
         }
     }
-    
+
     /// Creates a time position from a total number of seconds.
     ///
     /// # Arguments
@@ -260,7 +265,7 @@ impl TimePosition {
         let total_minutes = total_seconds / 60;
         let minutes = total_minutes % 60;
         let hours = total_minutes / 60;
-        
+
         Self {
             hours,
             minutes,
@@ -268,7 +273,7 @@ impl TimePosition {
             milliseconds,
         }
     }
-    
+
     /// Converts the time position to a total number of seconds.
     ///
     /// # Returns
@@ -279,10 +284,10 @@ impl TimePosition {
         let secs = self.seconds as f64 + (self.milliseconds as f64 / 1000.0);
         let mins = self.minutes as f64 * 60.0;
         let hrs = self.hours as f64 * 3600.0;
-        
+
         hrs + mins + secs
     }
-    
+
     /// Formats the time position in SRT format (00:00:00,000).
     ///
     /// # Returns
@@ -295,7 +300,7 @@ impl TimePosition {
             self.hours, self.minutes, self.seconds, self.milliseconds
         )
     }
-    
+
     /// Formats the time position in VTT format (00:00:00.000).
     ///
     /// # Returns
@@ -308,7 +313,7 @@ impl TimePosition {
             self.hours, self.minutes, self.seconds, self.milliseconds
         )
     }
-    
+
     /// Parses a time position from SRT format (00:00:00,000).
     ///
     /// # Arguments
@@ -325,7 +330,7 @@ impl TimePosition {
     pub fn parse_srt(time_str: &str) -> Result<Self> {
         Self::parse_time(time_str, ',')
     }
-    
+
     /// Parses a time position from VTT format (00:00:00.000).
     ///
     /// # Arguments
@@ -342,7 +347,7 @@ impl TimePosition {
     pub fn parse_vtt(time_str: &str) -> Result<Self> {
         Self::parse_time(time_str, '.')
     }
-    
+
     /// Parses a time position from a string with the specified separator.
     ///
     /// # Arguments
@@ -361,51 +366,50 @@ impl TimePosition {
         // Expected format: 00:00:00{separator}000
         let parts: Vec<&str> = time_str.split(separator).collect();
         if parts.len() != 2 {
-            return Err(Error::timing_error(
-                format!("Invalid time format: {time_str}")
-            ));
+            return Err(Error::timing_error(format!(
+                "Invalid time format: {time_str}"
+            )));
         }
-        
+
         let time_parts: Vec<&str> = parts[0].split(':').collect();
         if time_parts.len() != 3 {
-            return Err(Error::timing_error(
-                format!("Invalid time format: {time_str}")
-            ));
+            return Err(Error::timing_error(format!(
+                "Invalid time format: {time_str}"
+            )));
         }
-        
+
         let parse_component = |s: &str, name: &str| -> Result<u32> {
-            s.parse::<u32>().map_err(|_| 
-                Error::timing_error(format!("Invalid {name} in time: {s}"))
-            )
+            s.parse::<u32>()
+                .map_err(|_| Error::timing_error(format!("Invalid {name} in time: {s}")))
         };
-        
+
         let hours = parse_component(time_parts[0], "hours")?;
         let minutes = parse_component(time_parts[1], "minutes")?;
         let seconds = parse_component(time_parts[2], "seconds")?;
         let milliseconds = parse_component(parts[1], "milliseconds")?;
-        
+
         // Validate ranges
         if hours >= 24 {
-            return Err(Error::timing_error(
-                format!("Hours out of range (0-23): {hours}")
-            ));
+            return Err(Error::timing_error(format!(
+                "Hours out of range (0-23): {hours}"
+            )));
         }
         if minutes >= 60 {
-            return Err(Error::timing_error(
-                format!("Minutes out of range (0-59): {minutes}")
-            ));
+            return Err(Error::timing_error(format!(
+                "Minutes out of range (0-59): {minutes}"
+            )));
         }
         if seconds >= 60 {
-            return Err(Error::timing_error(
-                format!("Seconds out of range (0-59): {seconds}")
-            ));
+            return Err(Error::timing_error(format!(
+                "Seconds out of range (0-59): {seconds}"
+            )));
         }
         if milliseconds >= 1000 {
-            return Err(Error::timing_error(
-                format!("Milliseconds out of range (0-999): {milliseconds}")
-            ));
+            return Err(Error::timing_error(format!(
+                "Milliseconds out of range (0-999): {milliseconds}"
+            )));
         }
-        
+
         Ok(Self {
             hours,
             minutes,
@@ -443,70 +447,85 @@ impl TimePosition {
 
 impl FromStr for TimePosition {
     type Err = Error;
-    
+
     fn from_str(s: &str) -> Result<Self> {
         // Try SRT format first
         if s.contains(',') {
             return Self::parse_srt(s);
         }
-        
+
         // Then try VTT format
         if s.contains('.') {
             return Self::parse_vtt(s);
         }
-        
-        Err(Error::timing_error(
-            format!("Unrecognized time format: {s}")
-        ))
+
+        Err(Error::timing_error(format!(
+            "Unrecognized time format: {s}"
+        )))
     }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
-    
+
     #[test]
     fn test_subtitle_format_detection_from_extension() {
-        assert_eq!(SubtitleFormat::from_extension("test.srt").unwrap(), SubtitleFormat::Srt);
-        assert_eq!(SubtitleFormat::from_extension("test.vtt").unwrap(), SubtitleFormat::Vtt);
-        assert_eq!(SubtitleFormat::from_extension("test.ass").unwrap(), SubtitleFormat::Ass);
-        assert_eq!(SubtitleFormat::from_extension("test.ssa").unwrap(), SubtitleFormat::Ass);
-        assert_eq!(SubtitleFormat::from_extension("test.sub").unwrap(), SubtitleFormat::SubViewer);
-        
+        assert_eq!(
+            SubtitleFormat::from_extension("test.srt").unwrap(),
+            SubtitleFormat::Srt
+        );
+        assert_eq!(
+            SubtitleFormat::from_extension("test.vtt").unwrap(),
+            SubtitleFormat::Vtt
+        );
+        assert_eq!(
+            SubtitleFormat::from_extension("test.ass").unwrap(),
+            SubtitleFormat::Ass
+        );
+        assert_eq!(
+            SubtitleFormat::from_extension("test.ssa").unwrap(),
+            SubtitleFormat::Ass
+        );
+        assert_eq!(
+            SubtitleFormat::from_extension("test.sub").unwrap(),
+            SubtitleFormat::SubViewer
+        );
+
         assert!(SubtitleFormat::from_extension("test.txt").is_err());
     }
-    
+
     #[test]
     fn test_time_position_conversions() {
         let time = TimePosition::new(1, 23, 45, 678);
         assert_eq!(time.to_srt_format(), "01:23:45,678");
         assert_eq!(time.to_vtt_format(), "01:23:45.678");
-        
+
         let seconds = time.to_seconds();
         assert!((seconds - 5025.678).abs() < 0.001);
-        
+
         let time2 = TimePosition::from_seconds(seconds);
         assert_eq!(time, time2);
     }
-    
+
     #[test]
     fn test_time_position_parsing() {
         let srt_time = "01:23:45,678";
         let vtt_time = "01:23:45.678";
-        
+
         let time1 = TimePosition::parse_srt(srt_time).unwrap();
         let time2 = TimePosition::parse_vtt(vtt_time).unwrap();
-        
+
         assert_eq!(time1, time2);
         assert_eq!(time1.hours, 1);
         assert_eq!(time1.minutes, 23);
         assert_eq!(time1.seconds, 45);
         assert_eq!(time1.milliseconds, 678);
-        
+
         assert!(TimePosition::parse_srt("invalid").is_err());
         assert!(TimePosition::parse_vtt("01:23:invalid").is_err());
     }
-    
+
     #[test]
     fn test_format_display_and_parsing() {
         let formats = [
@@ -518,13 +537,13 @@ mod tests {
             SubtitleFormat::SubViewer,
             SubtitleFormat::MicroDVD,
         ];
-        
+
         for format in formats {
             let s = format.to_string();
             let parsed: SubtitleFormat = s.parse().unwrap();
             assert_eq!(format, parsed);
         }
-        
+
         assert!("Unknown".parse::<SubtitleFormat>().is_err());
     }
-} 
+}

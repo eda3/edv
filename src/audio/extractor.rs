@@ -2,37 +2,36 @@
 ///
 /// This module provides functions for extracting audio tracks from video files
 /// into separate audio files with various format options.
-
 use std::path::Path;
 
-use crate::ffmpeg::{FFmpeg, command::FFmpegCommand};
-use crate::audio::error::{Result, Error};
 use crate::audio::common;
+use crate::audio::error::{Error, Result};
+use crate::ffmpeg::{FFmpeg, command::FFmpegCommand};
 
 /// Audio extraction format options.
 #[derive(Debug, Clone)]
 pub struct ExtractionOptions {
     /// The audio codec to use for extraction (e.g., "aac", "mp3", "flac")
     pub codec: String,
-    
+
     /// The bitrate for the extracted audio (e.g., "192k")
     pub bitrate: String,
-    
+
     /// The sample rate for the extracted audio (e.g., 44100)
     pub sample_rate: u32,
-    
+
     /// Number of audio channels (1=mono, 2=stereo)
     pub channels: u8,
-    
+
     /// Which audio stream to extract (None = all streams)
     pub stream_index: Option<usize>,
-    
+
     /// Normalize audio during extraction
     pub normalize_audio: bool,
-    
+
     /// Start time to extract from (in seconds)
     pub start_time: Option<f64>,
-    
+
     /// Duration to extract (in seconds)
     pub duration: Option<f64>,
 }
@@ -42,7 +41,7 @@ impl Default for ExtractionOptions {
         Self {
             codec: common::DEFAULT_AUDIO_CODEC.to_string(),
             bitrate: common::DEFAULT_AUDIO_BITRATE.to_string(),
-            sample_rate: common::DEFAULT_AUDIO_SAMPLE_RATE,
+            sample_rate: common::DEFAULT_SAMPLE_RATE,
             channels: 2,
             stream_index: None,
             normalize_audio: false,
@@ -63,7 +62,7 @@ impl ExtractionOptions {
     #[must_use]
     pub fn codec(mut self, codec: &str) -> Self {
         let codec = codec.to_lowercase();
-        if common::is_supported_audio_format(&codec) {
+        if common::is_supported_format(&codec) {
             self.codec = codec;
         }
         self
@@ -151,60 +150,65 @@ where
     P2: AsRef<Path>,
 {
     let mut cmd = FFmpegCommand::new(ffmpeg);
-    
+
     // Add input file with optional start time
     if let Some(start) = options.start_time {
-        cmd.input_options(&["-ss", &start.to_string()])
-           .input(input);
+        let start_str = start.to_string();
+        let input_opts = vec!["-ss".to_string(), start_str];
+        cmd.input_options(&input_opts).input(input);
     } else {
         cmd.input(input);
     }
-    
+
     // Prepare output options
     let mut output_opts = Vec::new();
-    
+
     // Set duration if specified
     if let Some(duration) = options.duration {
-        output_opts.push("-t");
-        output_opts.push(&duration.to_string());
+        let duration_str = duration.to_string();
+        output_opts.push("-t".to_string());
+        output_opts.push(duration_str);
     }
-    
+
     // Set audio codec
-    output_opts.push("-c:a");
-    output_opts.push(&options.codec);
-    
+    output_opts.push("-c:a".to_string());
+    output_opts.push(options.codec.clone());
+
     // Set audio bitrate
-    output_opts.push("-b:a");
-    output_opts.push(&options.bitrate);
-    
+    output_opts.push("-b:a".to_string());
+    output_opts.push(options.bitrate.clone());
+
     // Set sample rate
-    output_opts.push("-ar");
-    output_opts.push(&options.sample_rate.to_string());
-    
+    let sample_rate_str = options.sample_rate.to_string();
+    output_opts.push("-ar".to_string());
+    output_opts.push(sample_rate_str);
+
     // Set channels
-    output_opts.push("-ac");
-    output_opts.push(&options.channels.to_string());
-    
+    let channels_str = options.channels.to_string();
+    output_opts.push("-ac".to_string());
+    output_opts.push(channels_str);
+
     // Extract specific audio stream if requested
     if let Some(index) = options.stream_index {
-        output_opts.push("-map");
-        output_opts.push(&format!("0:a:{}", index));
+        let map_str = format!("0:a:{}", index);
+        output_opts.push("-map".to_string());
+        output_opts.push(map_str);
     } else {
         // Only extract audio streams
-        output_opts.push("-vn");
+        output_opts.push("-vn".to_string());
     }
-    
+
     // Apply audio normalization if requested
     if options.normalize_audio {
-        output_opts.push("-filter:a");
-        output_opts.push("loudnorm=I=-16:TP=-1.5:LRA=11");
+        output_opts.push("-filter:a".to_string());
+        output_opts.push("loudnorm=I=-16:TP=-1.5:LRA=11".to_string());
     }
-    
+
     // Finalize command
     cmd.output_options(&output_opts)
-       .output(output)
-       .overwrite(true);
-    
+        .output(output)
+        .overwrite(true);
+
     cmd.execute().map_err(Error::from)
 }
 
@@ -222,10 +226,7 @@ where
 /// # Errors
 ///
 /// Returns an error if the file can't be processed
-pub fn list_audio_streams<P>(
-    ffmpeg: FFmpeg,
-    input: P,
-) -> Result<Vec<(usize, String, u8, u32)>>
+pub fn list_audio_streams<P>(ffmpeg: FFmpeg, input: P) -> Result<Vec<(usize, String, u8, u32)>>
 where
     P: AsRef<Path>,
 {
@@ -235,7 +236,7 @@ where
     // 1. Run FFmpeg with -stats to get stream information
     // 2. Parse the output to extract audio stream details
     // 3. Return the structured information
-    
+
     // For now, return an empty vector to avoid compilation errors
     Ok(Vec::new())
 }
@@ -271,19 +272,20 @@ where
     if segments.is_empty() {
         return Err(Error::ProcessingError("No segments specified".to_string()));
     }
-    
+
     // Validate segments
     for (i, (start, duration)) in segments.iter().enumerate() {
         if *start < 0.0 || *duration <= 0.0 {
-            return Err(Error::ProcessingError(
-                format!("Invalid segment {}: start={}, duration={}", i, start, duration)
-            ));
+            return Err(Error::ProcessingError(format!(
+                "Invalid segment {}: start={}, duration={}",
+                i, start, duration
+            )));
         }
     }
-    
+
     // Build a complex filter for extracting and concatenating segments
     let mut filter_complex = String::new();
-    
+
     // Create filter for each segment
     for (i, (start, duration)) in segments.iter().enumerate() {
         filter_complex.push_str(&format!(
@@ -291,46 +293,61 @@ where
             start, duration, i
         ));
     }
-    
+
     // Concatenate all segments
     filter_complex.push_str(&format!(
         "{}concat=n={}:v=0:a=1[outa]",
-        segments.iter().enumerate().map(|(i, _)| format!("[a{}]", i)).collect::<Vec<_>>().join(""),
+        segments
+            .iter()
+            .enumerate()
+            .map(|(i, _)| format!("[a{}]", i))
+            .collect::<Vec<_>>()
+            .join(""),
         segments.len()
     ));
-    
+
     // Build the command
     let mut cmd = FFmpegCommand::new(ffmpeg);
+    let sample_rate_str = options.sample_rate.to_string();
+    let channels_str = options.channels.to_string();
+
+    // Build output options as owned strings
+    let mut output_options = Vec::new();
+    output_options.push("-map".to_string());
+    output_options.push("[outa]".to_string());
+    output_options.push("-c:a".to_string());
+    output_options.push(options.codec.clone());
+    output_options.push("-b:a".to_string());
+    output_options.push(options.bitrate.clone());
+    output_options.push("-ar".to_string());
+    output_options.push(sample_rate_str);
+    output_options.push("-ac".to_string());
+    output_options.push(channels_str);
+
     cmd.input(input)
-       .filter_complex(&filter_complex)
-       .output_options(&[
-           "-map", "[outa]",
-           "-c:a", &options.codec,
-           "-b:a", &options.bitrate,
-           "-ar", &options.sample_rate.to_string(),
-           "-ac", &options.channels.to_string(),
-       ])
-       .output(output)
-       .overwrite(true);
-    
+        .filter_complex(&filter_complex)
+        .output_options(&output_options)
+        .output(output)
+        .overwrite(true);
+
     cmd.execute().map_err(Error::from)
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
-    
+
     #[test]
     fn test_extraction_options_defaults() {
         let options = ExtractionOptions::default();
         assert_eq!(options.codec, common::DEFAULT_AUDIO_CODEC);
         assert_eq!(options.bitrate, common::DEFAULT_AUDIO_BITRATE);
-        assert_eq!(options.sample_rate, common::DEFAULT_AUDIO_SAMPLE_RATE);
+        assert_eq!(options.sample_rate, common::DEFAULT_SAMPLE_RATE);
         assert_eq!(options.channels, 2);
         assert!(options.stream_index.is_none());
         assert!(!options.normalize_audio);
     }
-    
+
     #[test]
     fn test_extraction_options_fluent_api() {
         let options = ExtractionOptions::new()
@@ -342,7 +359,7 @@ mod tests {
             .normalize_audio(true)
             .start_time(10.5)
             .duration(30.0);
-            
+
         assert_eq!(options.codec, "mp3");
         assert_eq!(options.bitrate, "320k");
         assert_eq!(options.sample_rate, 48000);
@@ -352,15 +369,15 @@ mod tests {
         assert_eq!(options.start_time, Some(10.5));
         assert_eq!(options.duration, Some(30.0));
     }
-    
+
     #[test]
     fn test_extraction_options_validation() {
         // Test channel clamping
         let options = ExtractionOptions::new().channels(12);
         assert_eq!(options.channels, 8); // Should be clamped to 8
-        
+
         // Test start time validation
         let options = ExtractionOptions::new().start_time(-5.0);
         assert_eq!(options.start_time, Some(0.0)); // Should be clamped to 0
     }
-} 
+}
