@@ -9,6 +9,7 @@ This document outlines the coding guidelines and conventions to be followed when
 - **Use documentation comments (`///`) for public items**: Document public API elements using triple-slash comments.
 - **Use regular comments (`//`) for implementation details**: Explain complex algorithms or non-obvious code with regular comments.
 - **Keep documentation up to date**: When modifying code, always update the corresponding documentation to reflect the changes.
+- **Enclose specialized terms in backticks**: Always wrap technical terms, type names, field names, and other code elements in backticks.
 
 Example:
 ```rust
@@ -52,6 +53,28 @@ pub fn trim_video(
 }
 ```
 
+### Documentation Backtick Rules
+
+Always enclose the following elements in backticks when they appear in documentation comments:
+
+- Technical terms and formats (e.g., `FFmpeg`, `WebVTT`, `SubRip`)
+- Type names (e.g., `TimePosition`, `Error::RenderError`)
+- Parameter and field names (e.g., `end_time`)
+- Other code elements (e.g., `Option`, `String`)
+
+Examples:
+```rust
+/// Converts the video using `FFmpeg` with the specified codec.
+/// Formats the subtitle in `WebVTT` format.
+/// Returns a `TimePosition` or an error if parsing fails.
+/// Uses the `end_time` parameter to determine the duration.
+```
+
+### Error and Panic Documentation
+
+- Always include an `# Errors` section in documentation for functions that return `Result`
+- Include a `# Panics` section for functions that might panic
+
 ## Rust Best Practices
 
 - **Follow the Rust API Guidelines**: Adhere to the [Rust API Guidelines](https://rust-lang.github.io/api-guidelines/) for creating a consistent and idiomatic API.
@@ -63,6 +86,145 @@ pub fn trim_video(
 - **Minimize use of unsafe code**: Use `unsafe` only when absolutely necessary and document the safety invariants thoroughly.
 - **Implement appropriate traits**: Implement standard traits like `Debug`, `Clone`, `PartialEq`, etc. when applicable.
 - **Respect ownership and borrowing rules**: Use references (`&T` and `&mut T`) appropriately and avoid unnecessary cloning.
+
+### String Formatting
+
+Use direct variable embedding in `format!` macro and related macros:
+
+```rust
+// Bad practice
+format!("Failed to parse: {}", error)
+format!("Invalid time format: {}", time_str)
+
+// Good practice
+format!("Failed to parse: {error}")
+format!("Invalid time format: {time_str}")
+```
+
+For debug formatting, place the format specifier after the variable name:
+
+```rust
+// Bad practice
+format!("Unsupported extension: {:?}", extension)
+
+// Good practice
+format!("Unsupported extension: {extension:?}")
+```
+
+### Match Patterns
+
+Consolidate duplicate match arms using the pipe operator:
+
+```rust
+// Bad practice
+match format {
+    Format::Srt => "srt",
+    Format::Vtt => "vtt",
+    Format::WebVtt => "vtt",  // Duplicate logic
+    Format::Ass => "ass",
+    Format::AdvancedSsa => "ass",  // Duplicate logic
+}
+
+// Good practice
+match format {
+    Format::Srt => "srt",
+    Format::Vtt | Format::WebVtt => "vtt",
+    Format::Ass | Format::AdvancedSsa => "ass",
+}
+```
+
+Avoid arms that duplicate the wildcard pattern behavior:
+
+```rust
+// Bad practice (Srt arm duplicates wildcard logic)
+match format {
+    Format::Vtt => SubtitleFormat::WebVtt,
+    Format::Srt => SubtitleFormat::Srt,
+    _ => SubtitleFormat::Srt,  // Default to SRT
+}
+
+// Good practice
+match format {
+    Format::Vtt => SubtitleFormat::WebVtt,
+    _ => SubtitleFormat::Srt,  // Default to SRT
+}
+```
+
+### Return Value Annotations
+
+Use the `#[must_use]` attribute for functions that return important values:
+
+```rust
+// Bad practice
+pub fn to_extension(&self) -> &'static str {
+    // Implementation
+}
+
+// Good practice
+#[must_use]
+pub fn to_extension(&self) -> &'static str {
+    // Implementation
+}
+```
+
+Particularly important for:
+- Functions that create new instances
+- Functions that return computation results
+- Functions that return error-checking results
+- Functions that return iterators
+
+### Modern Rust Syntax
+
+Use `let...else` for error handling patterns:
+
+```rust
+// Bad practice
+let subtitle = match self.track.get_subtitle(id) {
+    Some(s) => s,
+    None => return Err(Error::not_found()),
+};
+
+// Good practice
+let Some(subtitle) = self.track.get_subtitle(id) else {
+    return Err(Error::not_found())
+};
+```
+
+Use method references instead of trivial closures:
+
+```rust
+// Bad practice
+items.map(|e| e.to_lowercase())
+
+// Good practice
+items.map(str::to_lowercase)
+```
+
+### Type Conversions
+
+Prefer `From`/`Into` traits over `as` for safe conversions:
+
+```rust
+// Bad practice
+let f = self.seconds as f64 + (self.milliseconds as f64 / 1000.0);
+
+// Good practice
+let f = f64::from(self.seconds) + (f64::from(self.milliseconds) / 1000.0);
+```
+
+Use `char` for single-character pattern matching:
+
+```rust
+// Bad practice
+if line.contains(":") {
+    // Implementation
+}
+
+// Good practice
+if line.contains(':') {
+    // Implementation
+}
+```
 
 ## Functional Programming Principles
 
