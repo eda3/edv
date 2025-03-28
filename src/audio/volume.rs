@@ -194,7 +194,8 @@ where
         filter_parts.push(format!("{volume_expr}:when='{time_expr}'"));
     }
 
-    let volume_filter = format!("volume={}", filter_parts.join(","));
+    let filter_parts_join = filter_parts.join(",");
+    let volume_filter = format!("volume={filter_parts_join}");
 
     let mut cmd = FFmpegCommand::new(ffmpeg);
     cmd.input(input)

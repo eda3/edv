@@ -251,7 +251,8 @@ where
 
     // Apply volume adjustment to replacement audio if needed
     if options.volume != 1.0 {
-        filter.push_str(&format!("volume={}", options.volume));
+        let volume = options.volume;
+        filter.push_str(&format!("volume={volume}"));
     }
 
     // Create a label for the adjusted replacement audio
@@ -260,7 +261,8 @@ where
     // If we want to mix in the original audio
     if options.original_volume > 0.0 {
         filter.push_str("[0:a]");
-        filter.push_str(&format!("volume={}", options.original_volume));
+        let original_volume = options.original_volume;
+        filter.push_str(&format!("volume={original_volume}"));
         filter.push_str("[adjusted_original];");
 
         // Mix the two audio streams

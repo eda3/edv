@@ -190,7 +190,7 @@ where
 
     // Extract specific audio stream if requested
     if let Some(index) = options.stream_index {
-        let map_str = format!("0:a:{}", index);
+        let map_str = format!("0:a:{index}");
         output_opts.push("-map".to_string());
         output_opts.push(map_str);
     } else {
