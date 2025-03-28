@@ -11,72 +11,67 @@ use std::process::Command;
 use std::str::FromStr;
 use std::{env, io};
 use std::error::Error as StdError;
+use thiserror::Error;
 
-/// The result type for FFmpeg operations.
-pub type Result<T> = std::result::Result<T, Error>;
+// Submodules
+pub mod command;
 
-/// Errors that can occur when working with FFmpeg.
-#[derive(Debug)]
+/// Errors that can occur in the FFmpeg module.
+#[derive(Error, Debug)]
 pub enum Error {
-    /// FFmpeg executable was not found.
+    /// FFmpeg executable not found.
+    #[error("FFmpeg executable not found")]
     NotFound,
-    /// FFmpeg version is incompatible.
-    IncompatibleVersion {
-        /// The found version.
-        found: Version,
-        /// The minimum required version.
+
+    /// FFmpeg executable path is not valid.
+    #[error("FFmpeg path is not valid: {0}")]
+    InvalidPath(String),
+
+    /// FFmpeg version is not supported.
+    #[error("FFmpeg version {actual} is not supported (minimum: {required})")]
+    UnsupportedVersion {
+        /// The actual FFmpeg version detected.
+        actual: Version,
+        /// The minimum required FFmpeg version.
         required: Version,
     },
-    /// Error executing FFmpeg.
+
+    /// Error executing FFmpeg command.
+    #[error("Error executing FFmpeg command: {0}")]
     ExecutionError(String),
-    /// IO error occurred.
-    IoError(io::Error),
+
     /// Error parsing FFmpeg output.
-    ParseError(String),
-    /// FFmpeg process was terminated unexpectedly.
+    #[error("Error parsing FFmpeg output: {0}")]
+    OutputParseError(String),
+
+    /// IO error occurred.
+    #[error("IO error: {0}")]
+    IoError(#[from] io::Error),
+
+    /// FFmpeg process terminated with non-zero exit code.
+    #[error("FFmpeg process terminated: {message}")]
     ProcessTerminated {
-        /// The exit code if available.
+        /// The exit code of the process, if available.
         exit_code: Option<i32>,
-        /// Error message.
+        /// The error message.
         message: String,
     },
+
+    /// Invalid time format provided.
+    #[error("Invalid time format: {0}")]
+    InvalidTimeFormat(String),
+
+    /// Missing required argument.
+    #[error("Missing required argument: {0}")]
+    MissingArgument(String),
+
+    /// Invalid argument provided.
+    #[error("Invalid argument: {0}")]
+    InvalidArgument(String),
 }
 
-impl Display for Error {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        match self {
-            Self::NotFound => write!(f, "FFmpeg executable not found"),
-            Self::IncompatibleVersion { found, required } => {
-                write!(f, "Incompatible FFmpeg version: found {found}, required minimum {required}")
-            }
-            Self::ExecutionError(msg) => write!(f, "FFmpeg execution error: {msg}"),
-            Self::IoError(err) => write!(f, "IO error: {err}"),
-            Self::ParseError(msg) => write!(f, "Error parsing FFmpeg output: {msg}"),
-            Self::ProcessTerminated { exit_code, message } => {
-                if let Some(code) = exit_code {
-                    write!(f, "FFmpeg process terminated with exit code {code}: {message}")
-                } else {
-                    write!(f, "FFmpeg process terminated: {message}")
-                }
-            }
-        }
-    }
-}
-
-impl StdError for Error {
-    fn source(&self) -> Option<&(dyn StdError + 'static)> {
-        match self {
-            Self::IoError(err) => Some(err),
-            _ => None,
-        }
-    }
-}
-
-impl From<io::Error> for Error {
-    fn from(error: io::Error) -> Self {
-        Self::IoError(error)
-    }
-}
+/// Result type for FFmpeg operations.
+pub type Result<T> = std::result::Result<T, Error>;
 
 /// Represents an FFmpeg version.
 #[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord)]
@@ -132,7 +127,7 @@ impl FromStr for Version {
     fn from_str(s: &str) -> std::result::Result<Self, Self::Err> {
         let parts: Vec<&str> = s.split('.').collect();
         if parts.len() < 3 {
-            return Err(Error::ParseError(format!(
+            return Err(Error::OutputParseError(format!(
                 "Invalid version format: {s}, expected major.minor.patch"
             )));
         }
@@ -141,7 +136,7 @@ impl FromStr for Version {
             parts[idx]
                 .parse::<u32>()
                 .map_err(|_| {
-                    Error::ParseError(format!(
+                    Error::OutputParseError(format!(
                         "Invalid {name} version component: {}",
                         parts[idx]
                     ))
@@ -257,8 +252,8 @@ impl FFmpeg {
 
         // Check version compatibility
         if version < Self::MIN_VERSION {
-            return Err(Error::IncompatibleVersion {
-                found: version,
+            return Err(Error::UnsupportedVersion {
+                actual: version,
                 required: Self::MIN_VERSION,
             });
         }
@@ -391,14 +386,14 @@ impl FFmpeg {
         // ffmpeg version 4.3.2 Copyright (c) 2000-2021 ...
         
         let version_line = output.lines().next().ok_or_else(|| {
-            Error::ParseError("Empty output from FFmpeg -version".to_string())
+            Error::OutputParseError("Empty output from FFmpeg -version".to_string())
         })?;
         
         let version_str = version_line
             .split_whitespace()
             .nth(2)
             .ok_or_else(|| {
-                Error::ParseError(format!("Unexpected FFmpeg version output: {version_line}"))
+                Error::OutputParseError(format!("Unexpected FFmpeg version output: {version_line}"))
             })?;
         
         version_str.parse()
@@ -415,8 +410,8 @@ impl FFmpeg {
     /// Returns an error if FFmpeg is not valid or compatible.
     pub fn validate(&self) -> Result<()> {
         if self.version < Self::MIN_VERSION {
-            return Err(Error::IncompatibleVersion {
-                found: self.version.clone(),
+            return Err(Error::UnsupportedVersion {
+                actual: self.version.clone(),
                 required: Self::MIN_VERSION,
             });
         }
