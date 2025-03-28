@@ -103,7 +103,7 @@ pub struct TemporalAdjustment {
 ///
 /// Returns an error if the file can't be processed or doesn't contain audio
 pub fn adjust_volume<P1, P2>(
-    ffmpeg: FFmpeg,
+    ffmpeg: &FFmpeg,
     input: P1,
     output: P2,
     adjustment: VolumeAdjustment,
@@ -117,8 +117,8 @@ where
     }
 
     let volume_expr = match adjustment {
-        VolumeAdjustment::Linear(value) => format!("volume={}", value),
-        VolumeAdjustment::Decibel(db) => format!("volume={}dB", db),
+        VolumeAdjustment::Linear(value) => format!("volume={value}"),
+        VolumeAdjustment::Decibel(db) => format!("volume={db}dB"),
     };
 
     let mut cmd = FFmpegCommand::new(ffmpeg);
@@ -147,7 +147,7 @@ where
 ///
 /// Returns an error if the file can't be processed or doesn't contain audio
 pub fn adjust_volume_temporal<P1, P2>(
-    ffmpeg: FFmpeg,
+    ffmpeg: &FFmpeg,
     input: P1,
     output: P2,
     adjustments: &[TemporalAdjustment],
@@ -171,13 +171,14 @@ where
         }
 
         let volume_expr = match adj.adjustment {
-            VolumeAdjustment::Linear(value) => format!("volume={}", value),
-            VolumeAdjustment::Decibel(db) => format!("volume={}dB", db),
+            VolumeAdjustment::Linear(value) => format!("volume={value}"),
+            VolumeAdjustment::Decibel(db) => format!("volume={db}dB"),
         };
 
         let time_expr = match adj.end_time {
             Some(end) if end > adj.start_time => {
-                format!("between(t,{:.3},{:.3})", adj.start_time, end)
+                let start = adj.start_time;
+                format!("between(t,{start:.3},{end:.3})")
             }
             Some(_) => {
                 return Err(Error::ProcessingError(
@@ -185,11 +186,12 @@ where
                 ));
             }
             None => {
-                format!("gte(t,{:.3})", adj.start_time)
+                let start = adj.start_time;
+                format!("gte(t,{start:.3})")
             }
         };
 
-        filter_parts.push(format!("{}:when='{}'", volume_expr, time_expr));
+        filter_parts.push(format!("{volume_expr}:when='{time_expr}'"));
     }
 
     let volume_filter = format!("volume={}", filter_parts.join(","));
@@ -220,7 +222,7 @@ where
 ///
 /// Returns an error if the file can't be processed or doesn't contain audio
 pub fn normalize_volume<P1, P2>(
-    ffmpeg: FFmpeg,
+    ffmpeg: &FFmpeg,
     input: P1,
     output: P2,
     target_level: f64,
@@ -240,15 +242,12 @@ where
     // 1. First analyze audio to find the current levels
     // 2. Then apply normalization based on the analysis
 
-    let mut cmd = FFmpegCommand::new(ffmpeg.clone());
+    let mut cmd = FFmpegCommand::new(ffmpeg);
     cmd.input(input.as_ref())
         .output(output)
         .output_options([
             "-filter:a",
-            &format!(
-                "loudnorm=I={}:TP=-1.5:LRA=11:print_format=json",
-                target_level
-            ),
+            &format!("loudnorm=I={target_level}:TP=-1.5:LRA=11:print_format=json"),
             "-c:v",
             "copy",
         ])

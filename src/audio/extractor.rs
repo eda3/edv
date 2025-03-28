@@ -140,10 +140,10 @@ impl ExtractionOptions {
 ///
 /// Returns an error if the file can't be processed or doesn't contain audio
 pub fn extract_audio<P1, P2>(
-    ffmpeg: FFmpeg,
+    ffmpeg: &FFmpeg,
     input: P1,
     output: P2,
-    options: ExtractionOptions,
+    options: &ExtractionOptions,
 ) -> Result<()>
 where
     P1: AsRef<Path>,
@@ -226,7 +226,7 @@ where
 /// # Errors
 ///
 /// Returns an error if the file can't be processed
-pub fn list_audio_streams<P>(_ffmpeg: FFmpeg, _input: P) -> Result<Vec<(usize, String, u8, u32)>>
+pub fn list_audio_streams<P>(_ffmpeg: &FFmpeg, _input: P) -> Result<Vec<(usize, String, u8, u32)>>
 where
     P: AsRef<Path>,
 {
@@ -259,11 +259,11 @@ where
 ///
 /// Returns an error if the file can't be processed or doesn't contain audio
 pub fn extract_segments<P1, P2>(
-    ffmpeg: FFmpeg,
+    ffmpeg: &FFmpeg,
     input: P1,
     output: P2,
     segments: &[(f64, f64)],
-    options: ExtractionOptions,
+    options: &ExtractionOptions,
 ) -> Result<()>
 where
     P1: AsRef<Path>,

@@ -213,11 +213,11 @@ impl ReplacementOptions {
 ///
 /// Returns an error if the files can't be processed
 pub fn replace_audio<P1, P2, P3>(
-    ffmpeg: FFmpeg,
+    ffmpeg: &FFmpeg,
     video: P1,
     audio: P2,
     output: P3,
-    options: ReplacementOptions,
+    options: &ReplacementOptions,
 ) -> Result<()>
 where
     P1: AsRef<Path>,
@@ -311,10 +311,10 @@ where
 ///
 /// Returns an error if the file can't be processed
 pub fn replace_with_silence<P1, P2>(
-    ffmpeg: FFmpeg,
+    ffmpeg: &FFmpeg,
     input: P1,
     output: P2,
-    options: ReplacementOptions,
+    options: &ReplacementOptions,
 ) -> Result<()>
 where
     P1: AsRef<Path>,
@@ -364,12 +364,12 @@ where
 ///
 /// Returns an error if the files can't be processed
 pub fn replace_segments<P1, P2, P3>(
-    ffmpeg: FFmpeg,
+    ffmpeg: &FFmpeg,
     video: P1,
     audio: P2,
     output: P3,
     segments: &[(f64, f64, f64)],
-    options: ReplacementOptions,
+    options: &ReplacementOptions,
 ) -> Result<()>
 where
     P1: AsRef<Path>,
@@ -384,8 +384,7 @@ where
     for (i, (v_start, v_end, a_start)) in segments.iter().enumerate() {
         if *v_start < 0.0 || *v_end <= *v_start || *a_start < 0.0 {
             return Err(Error::ProcessingError(format!(
-                "Invalid segment {}: video_start={}, video_end={}, audio_start={}",
-                i, v_start, v_end, a_start
+                "Invalid segment {i}: video_start={v_start}, video_end={v_end}, audio_start={a_start}"
             )));
         }
     }
@@ -400,9 +399,12 @@ where
 
     // Split original audio into segments
     filter.push_str("[0:a]asplit=");
-    filter.push_str(&format!("{}[original]", segments.len() + 1));
+    filter.push_str(&format!(
+        "{segments_len}[original]",
+        segments_len = segments.len() + 1
+    ));
     for i in 0..segments.len() {
-        filter.push_str(&format!("[seg{}]", i));
+        filter.push_str(&format!("[seg{i}]"));
     }
     filter.push(';');
 
@@ -410,23 +412,22 @@ where
     for (i, (v_start, v_end, a_start)) in segments.iter().enumerate() {
         // Get segment from original audio
         filter.push_str(&format!(
-            "[seg{}]atrim=start={}:end={},asetpts=PTS-STARTPTS[oseg{}];",
-            i, v_start, v_end, i
+            "[seg{i}]atrim=start={v_start}:end={v_end},asetpts=PTS-STARTPTS[oseg{i}];"
         ));
 
         // Get corresponding segment from replacement audio
         let a_duration = v_end - v_start;
         filter.push_str(&format!(
-            "[1:a]atrim=start={}:duration={},asetpts=PTS-STARTPTS",
-            a_start, a_duration
+            "[1:a]atrim=start={a_start}:duration={a_duration},asetpts=PTS-STARTPTS"
         ));
 
         // Apply volume adjustment if needed
         if options.volume != 1.0 {
-            filter.push_str(&format!(",volume={}", options.volume));
+            let volume = options.volume;
+            filter.push_str(&format!(",volume={volume}"));
         }
 
-        filter.push_str(&format!("[rseg{}];", i));
+        filter.push_str(&format!("[rseg{i}];"));
     }
 
     // Now build audio timeline by concatenating segments
@@ -439,15 +440,14 @@ where
         // If there's a gap before this segment, add the original audio
         if *v_start > last_end {
             filter.push_str(&format!(
-                "[original]atrim=start={}:end={},asetpts=PTS-STARTPTS[gap{}];",
-                last_end, v_start, i
+                "[original]atrim=start={last_end}:end={v_start},asetpts=PTS-STARTPTS[gap{i}];"
             ));
-            concat_parts.push(format!("[gap{}]", i));
+            concat_parts.push(format!("[gap{i}]"));
             input_count += 1;
         }
 
         // Add the replacement segment
-        concat_parts.push(format!("[rseg{}]", i));
+        concat_parts.push(format!("[rseg{i}]"));
         input_count += 1;
 
         last_end = *v_end;
@@ -455,17 +455,15 @@ where
 
     // If there's audio after the last segment, add it
     filter.push_str(&format!(
-        "[original]atrim=start={},asetpts=PTS-STARTPTS[remainder];",
-        last_end
+        "[original]atrim=start={last_end},asetpts=PTS-STARTPTS[remainder];"
     ));
     concat_parts.push("[remainder]".to_string());
     input_count += 1;
 
     // Concatenate all parts
     filter.push_str(&format!(
-        "{}concat=n={}:v=0:a=1[final_audio]",
-        concat_parts.join(""),
-        input_count
+        "{concat_parts_join}concat=n={input_count}:v=0:a=1[final_audio]",
+        concat_parts_join = concat_parts.join("")
     ));
 
     // Build the output command

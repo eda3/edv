@@ -1,15 +1,15 @@
 ﻿use crate::ffmpeg::{Error, FFmpeg, Result};
-/// FFmpeg command construction utilities.
+/// `FFmpeg` command construction utilities.
 ///
-/// This module provides a simplified interface for building FFmpeg commands.
+/// This module provides a simplified interface for building `FFmpeg` commands.
 use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
 
-/// Represents an FFmpeg command.
+/// Represents an `FFmpeg` command.
 #[derive(Debug, Clone)]
-pub struct FFmpegCommand {
-    /// The FFmpeg instance to use.
-    ffmpeg: FFmpeg,
+pub struct FFmpegCommand<'a> {
+    /// The `FFmpeg` instance to use.
+    ffmpeg: &'a FFmpeg,
     /// Input options to apply before specifying inputs.
     input_options: Vec<String>,
     /// Input files for the command.
@@ -24,14 +24,14 @@ pub struct FFmpegCommand {
     overwrite: bool,
 }
 
-impl FFmpegCommand {
-    /// Creates a new FFmpeg command.
+impl<'a> FFmpegCommand<'a> {
+    /// Creates a new `FFmpeg` command.
     ///
     /// # Arguments
     ///
-    /// * `ffmpeg` - The FFmpeg instance to use
+    /// * `ffmpeg` - The `FFmpeg` instance to use
     #[must_use]
-    pub fn new(ffmpeg: FFmpeg) -> Self {
+    pub fn new(ffmpeg: &'a FFmpeg) -> Self {
         Self {
             ffmpeg,
             input_options: Vec::new(),
@@ -135,7 +135,7 @@ impl FFmpegCommand {
         self
     }
 
-    /// Executes the FFmpeg command.
+    /// Executes the `FFmpeg` command.
     ///
     /// # Returns
     ///
@@ -146,7 +146,7 @@ impl FFmpegCommand {
     /// Returns an error if:
     /// * No output file is specified
     /// * No input files are specified
-    /// * The FFmpeg process fails to start or returns a non-zero exit code
+    /// * The `FFmpeg` process fails to start or returns a non-zero exit code
     pub fn execute(&self) -> Result<()> {
         // Check that we have inputs and an output
         if self.inputs.is_empty() {
@@ -205,11 +205,9 @@ impl FFmpegCommand {
         // Check for success
         if !output.status.success() {
             let stderr = String::from_utf8_lossy(&output.stderr);
-            let exit_code = output.status.code();
-
             return Err(Error::ProcessTerminated {
-                exit_code,
-                message: format!("FFmpeg process failed: {}", stderr),
+                exit_code: output.status.code(),
+                message: format!("FFmpeg process failed: {stderr}"),
             });
         }
 

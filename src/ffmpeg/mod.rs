@@ -1,8 +1,8 @@
-/// FFmpeg integration for the edv video editor.
+/// `FFmpeg` integration for the edv video editor.
 ///
 /// This module provides functionality for detecting, validating, and
-/// interacting with FFmpeg. It serves as the core abstraction layer between
-/// the application and FFmpeg, handling command construction, execution, and
+/// interacting with `FFmpeg`. It serves as the core abstraction layer between
+/// the application and `FFmpeg`, handling command construction, execution, and
 /// result parsing.
 use std::fmt::{self, Display};
 use std::path::{Path, PathBuf};
@@ -15,31 +15,31 @@ use thiserror::Error;
 pub mod command;
 pub mod error;
 
-/// Errors that can occur in the FFmpeg module.
+/// Errors that can occur in the `FFmpeg` module.
 #[derive(Error, Debug)]
 pub enum Error {
-    /// FFmpeg executable not found.
+    /// `FFmpeg` executable not found.
     #[error("FFmpeg executable not found")]
     NotFound,
 
-    /// FFmpeg executable path is not valid.
+    /// `FFmpeg` executable path is not valid.
     #[error("FFmpeg path is not valid: {0}")]
     InvalidPath(String),
 
-    /// FFmpeg version is not supported.
+    /// `FFmpeg` version is not supported.
     #[error("FFmpeg version {actual} is not supported (minimum: {required})")]
     UnsupportedVersion {
-        /// The actual FFmpeg version detected.
+        /// The actual `FFmpeg` version detected.
         actual: Version,
-        /// The minimum required FFmpeg version.
+        /// The minimum required `FFmpeg` version.
         required: Version,
     },
 
-    /// Error executing FFmpeg command.
+    /// Error executing `FFmpeg` command.
     #[error("Error executing FFmpeg command: {0}")]
     ExecutionError(String),
 
-    /// Error parsing FFmpeg output.
+    /// Error parsing `FFmpeg` output.
     #[error("Error parsing FFmpeg output: {0}")]
     OutputParseError(String),
 
@@ -47,7 +47,7 @@ pub enum Error {
     #[error("IO error: {0}")]
     IoError(#[from] io::Error),
 
-    /// FFmpeg process terminated with non-zero exit code.
+    /// `FFmpeg` process terminated with non-zero exit code.
     #[error("FFmpeg process terminated: {message}")]
     ProcessTerminated {
         /// The exit code of the process, if available.
@@ -69,10 +69,10 @@ pub enum Error {
     InvalidArgument(String),
 }
 
-/// Result type for FFmpeg operations.
+/// Result type for `FFmpeg` operations.
 pub type Result<T> = std::result::Result<T, Error>;
 
-/// Represents an FFmpeg version.
+/// Represents an `FFmpeg` version.
 #[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord)]
 pub struct Version {
     /// Major version number.
@@ -153,29 +153,29 @@ impl FromStr for Version {
     }
 }
 
-/// Represents a detected FFmpeg installation.
+/// Represents a detected `FFmpeg` installation.
 #[derive(Debug, Clone)]
 pub struct FFmpeg {
-    /// The path to the FFmpeg executable.
+    /// The path to the `FFmpeg` executable.
     path: PathBuf,
-    /// The FFmpeg version.
+    /// The `FFmpeg` version.
     version: Version,
 }
 
 impl FFmpeg {
-    /// The minimum supported FFmpeg version.
+    /// The minimum supported `FFmpeg` version.
     pub const MIN_VERSION: Version = Version {
         major: 4,
         minor: 0,
         patch: 0,
     };
 
-    /// Creates a new FFmpeg instance.
+    /// Creates a new `FFmpeg` instance.
     ///
     /// # Arguments
     ///
-    /// * `path` - The path to the FFmpeg executable
-    /// * `version` - The detected FFmpeg version
+    /// * `path` - The path to the `FFmpeg` executable
+    /// * `version` - The detected `FFmpeg` version
     ///
     /// # Returns
     ///
@@ -185,37 +185,37 @@ impl FFmpeg {
         Self { path, version }
     }
 
-    /// Gets the path to the FFmpeg executable.
+    /// Gets the path to the `FFmpeg` executable.
     ///
     /// # Returns
     ///
-    /// A reference to the path of the FFmpeg executable.
+    /// A reference to the path of the `FFmpeg` executable.
     #[must_use]
     pub fn path(&self) -> &Path {
         &self.path
     }
 
-    /// Gets the FFmpeg version.
+    /// Gets the `FFmpeg` version.
     ///
     /// # Returns
     ///
-    /// A reference to the FFmpeg version.
+    /// A reference to the `FFmpeg` version.
     #[must_use]
     pub fn version(&self) -> &Version {
         &self.version
     }
 
-    /// Detects the FFmpeg installation.
+    /// Detects the `FFmpeg` installation.
     ///
-    /// Searches for FFmpeg in the system PATH and validates it.
+    /// Searches for `FFmpeg` in the system PATH and validates it.
     ///
     /// # Returns
     ///
-    /// A Result containing the FFmpeg installation if found and valid.
+    /// A Result containing the `FFmpeg` installation if found and valid.
     ///
     /// # Errors
     ///
-    /// Returns an error if FFmpeg is not found or not compatible.
+    /// Returns an error if `FFmpeg` is not found or not compatible.
     pub fn detect() -> Result<Self> {
         // First try to find in PATH
         if let Ok(ffmpeg) = Self::detect_in_path() {
@@ -230,19 +230,19 @@ impl FFmpeg {
         Err(Error::NotFound)
     }
 
-    /// Detects FFmpeg installation from a specified path.
+    /// Detects `FFmpeg` installation from a specified path.
     ///
     /// # Arguments
     ///
-    /// * `path` - The path to check for FFmpeg executable
+    /// * `path` - The path to check for `FFmpeg` executable
     ///
     /// # Returns
     ///
-    /// A Result containing the FFmpeg installation if found and valid.
+    /// A Result containing the `FFmpeg` installation if found and valid.
     ///
     /// # Errors
     ///
-    /// Returns an error if FFmpeg is not found at the path or not compatible.
+    /// Returns an error if `FFmpeg` is not found at the path or not compatible.
     pub fn detect_at_path<P: AsRef<Path>>(path: P) -> Result<Self> {
         let path = path.as_ref().to_path_buf();
         if !path.exists() {
@@ -263,15 +263,15 @@ impl FFmpeg {
         Ok(Self::new(path, version))
     }
 
-    /// Detects FFmpeg in the system PATH.
+    /// Detects `FFmpeg` in the system PATH.
     ///
     /// # Returns
     ///
-    /// A Result containing the FFmpeg installation if found and valid.
+    /// A Result containing the `FFmpeg` installation if found and valid.
     ///
     /// # Errors
     ///
-    /// Returns an error if FFmpeg is not found in PATH or not compatible.
+    /// Returns an error if `FFmpeg` is not found in PATH or not compatible.
     fn detect_in_path() -> Result<Self> {
         // Try to find ffmpeg in PATH
         let ffmpeg_name = if cfg!(windows) {
@@ -287,15 +287,15 @@ impl FFmpeg {
         Err(Error::NotFound)
     }
 
-    /// Detects FFmpeg in common installation locations.
+    /// Detects `FFmpeg` in common installation locations.
     ///
     /// # Returns
     ///
-    /// A Result containing the FFmpeg installation if found and valid.
+    /// A Result containing the `FFmpeg` installation if found and valid.
     ///
     /// # Errors
     ///
-    /// Returns an error if FFmpeg is not found in common locations or not compatible.
+    /// Returns an error if `FFmpeg` is not found in common locations or not compatible.
     fn detect_in_common_locations() -> Result<Self> {
         let common_locations = Self::get_common_locations();
 
@@ -311,11 +311,11 @@ impl FFmpeg {
         Err(Error::NotFound)
     }
 
-    /// Gets common installation locations for FFmpeg.
+    /// Gets common installation locations for `FFmpeg`.
     ///
     /// # Returns
     ///
-    /// A vector of paths to check for FFmpeg.
+    /// A vector of paths to check for `FFmpeg`.
     #[must_use]
     fn get_common_locations() -> Vec<PathBuf> {
         let mut locations = Vec::new();
@@ -354,11 +354,11 @@ impl FFmpeg {
         locations
     }
 
-    /// Parses the FFmpeg version from command output.
+    /// Parses the `FFmpeg` version from command output.
     ///
     /// # Arguments
     ///
-    /// * `path` - The path to the FFmpeg executable
+    /// * `path` - The path to the `FFmpeg` executable
     ///
     /// # Returns
     ///
@@ -384,7 +384,7 @@ impl FFmpeg {
         Self::parse_version_from_output(&output_str)
     }
 
-    /// Parses the FFmpeg version from version output.
+    /// Parses the `FFmpeg` version from version output.
     ///
     /// # Arguments
     ///
@@ -412,15 +412,15 @@ impl FFmpeg {
         version_str.parse()
     }
 
-    /// Checks if the FFmpeg installation is valid and compatible.
+    /// Checks if the `FFmpeg` installation is valid and compatible.
     ///
     /// # Returns
     ///
-    /// A Result indicating if FFmpeg is valid and compatible.
+    /// A Result indicating if `FFmpeg` is valid and compatible.
     ///
     /// # Errors
     ///
-    /// Returns an error if FFmpeg is not valid or compatible.
+    /// Returns an error if `FFmpeg` is not valid or compatible.
     pub fn validate(&self) -> Result<()> {
         if self.version < Self::MIN_VERSION {
             return Err(Error::UnsupportedVersion {
@@ -429,7 +429,7 @@ impl FFmpeg {
             });
         }
 
-        // Try to run a simple command to ensure FFmpeg is working
+        // Try to run a simple command to ensure `FFmpeg` is working
         let output = Command::new(&self.path).arg("-version").output()?;
 
         if !output.status.success() {

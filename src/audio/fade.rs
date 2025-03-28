@@ -122,12 +122,12 @@ impl FadeOptions {
 ///
 /// Returns an error if the file can't be processed or doesn't contain audio
 pub fn fade_in<P1, P2>(
-    ffmpeg: FFmpeg,
+    ffmpeg: &FFmpeg,
     input: P1,
     output: P2,
     duration: f64,
     fade_type: FadeType,
-    options: FadeOptions,
+    options: &FadeOptions,
 ) -> Result<()>
 where
     P1: AsRef<Path>,
@@ -137,11 +137,8 @@ where
         return Err(Error::InvalidFadeDuration(duration));
     }
 
-    let fade_filter = format!(
-        "afade=t=in:st=0:d={}:curve={}",
-        duration,
-        fade_type.as_ffmpeg_string()
-    );
+    let curve = fade_type.as_ffmpeg_string();
+    let fade_filter = format!("afade=t=in:st=0:d={duration}:curve={curve}");
 
     let mut cmd = FFmpegCommand::new(ffmpeg);
 
@@ -188,12 +185,12 @@ where
 ///
 /// Returns an error if the file can't be processed or doesn't contain audio
 pub fn fade_out<P1, P2>(
-    ffmpeg: FFmpeg,
+    ffmpeg: &FFmpeg,
     input: P1,
     output: P2,
     duration: f64,
     fade_type: FadeType,
-    options: FadeOptions,
+    options: &FadeOptions,
 ) -> Result<()>
 where
     P1: AsRef<Path>,
@@ -204,19 +201,15 @@ where
     }
 
     // Get the duration of the input file
-    let file_duration = get_duration(&ffmpeg, input.as_ref())?;
+    let file_duration = get_duration(ffmpeg, input.as_ref())?;
 
     let start_time = file_duration - duration;
     if start_time < 0.0 {
         return Err(Error::InvalidFadeDuration(duration));
     }
 
-    let fade_filter = format!(
-        "afade=t=out:st={}:d={}:curve={}",
-        start_time,
-        duration,
-        fade_type.as_ffmpeg_string()
-    );
+    let curve = fade_type.as_ffmpeg_string();
+    let fade_filter = format!("afade=t=out:st={start_time}:d={duration}:curve={curve}");
 
     let mut cmd = FFmpegCommand::new(ffmpeg);
 
@@ -264,13 +257,13 @@ where
 ///
 /// Returns an error if the file can't be processed or doesn't contain audio
 pub fn fade_both<P1, P2>(
-    ffmpeg: FFmpeg,
+    ffmpeg: &FFmpeg,
     input: P1,
     output: P2,
     fade_in_duration: f64,
     fade_out_duration: f64,
     fade_type: FadeType,
-    options: FadeOptions,
+    options: &FadeOptions,
 ) -> Result<()>
 where
     P1: AsRef<Path>,
@@ -283,7 +276,7 @@ where
     }
 
     // Get the duration of the input file
-    let file_duration = get_duration(&ffmpeg, input.as_ref())?;
+    let file_duration = get_duration(ffmpeg, input.as_ref())?;
 
     let fade_out_start = file_duration - fade_out_duration;
     if fade_out_start <= fade_in_duration {
@@ -295,8 +288,7 @@ where
     // Build both fade operations in one filter
     let curve = fade_type.as_ffmpeg_string();
     let fade_filter = format!(
-        "afade=t=in:st=0:d={}:curve={},afade=t=out:st={}:d={}:curve={}",
-        fade_in_duration, curve, fade_out_start, fade_out_duration, curve
+        "afade=t=in:st=0:d={fade_in_duration}:curve={curve},afade=t=out:st={fade_out_start}:d={fade_out_duration}:curve={curve}"
     );
 
     let mut cmd = FFmpegCommand::new(ffmpeg);
@@ -345,13 +337,13 @@ where
 ///
 /// Returns an error if the file can't be processed or doesn't contain audio
 pub fn fade_segments<P1, P2>(
-    ffmpeg: FFmpeg,
+    ffmpeg: &FFmpeg,
     input: P1,
     output: P2,
     segments: &[(f64, f64, bool, bool)],
     fade_duration: f64,
     fade_type: FadeType,
-    options: FadeOptions,
+    options: &FadeOptions,
 ) -> Result<()>
 where
     P1: AsRef<Path>,
@@ -372,55 +364,49 @@ where
     for (i, (start, duration, fade_in, fade_out)) in segments.iter().enumerate() {
         if *start < 0.0 || *duration <= 0.0 {
             return Err(Error::ProcessingError(format!(
-                "Invalid segment {}: start={}, duration={}",
-                i, start, duration
+                "Invalid segment {i}: start={start}, duration={duration}"
             )));
         }
 
         if *fade_in && *fade_out && *duration <= 2.0 * fade_duration {
             return Err(Error::ProcessingError(format!(
-                "Segment {} is too short for both fade-in and fade-out",
-                i
+                "Segment {i} is too short for both fade-in and fade-out"
             )));
         }
 
         filter_complex.push_str(&format!(
-            "[0:a]atrim=start={}:duration={},asetpts=PTS-STARTPTS",
-            start, duration
+            "[0:a]atrim=start={start}:duration={duration},asetpts=PTS-STARTPTS"
         ));
 
         // Apply fade-in if requested
         if *fade_in {
-            filter_complex.push_str(&format!(
-                ",afade=t=in:st=0:d={}:curve={}",
-                fade_duration,
-                fade_type.as_ffmpeg_string()
-            ));
+            let curve = fade_type.as_ffmpeg_string();
+            filter_complex.push_str(&format!(",afade=t=in:st=0:d={fade_duration}:curve={curve}"));
         }
 
         // Apply fade-out if requested
         if *fade_out {
+            let fade_start = duration - fade_duration;
+            let curve = fade_type.as_ffmpeg_string();
             filter_complex.push_str(&format!(
-                ",afade=t=out:st={}:d={}:curve={}",
-                duration - fade_duration,
-                fade_duration,
-                fade_type.as_ffmpeg_string()
+                ",afade=t=out:st={fade_start}:d={fade_duration}:curve={curve}"
             ));
         }
 
-        filter_complex.push_str(&format!("[a{}];", i));
+        filter_complex.push_str(&format!("[a{i}];"));
     }
 
     // Concatenate all segments
+    let segment_refs = segments
+        .iter()
+        .enumerate()
+        .map(|(i, _)| format!("[a{i}]"))
+        .collect::<Vec<_>>()
+        .join("");
+    let segment_count = segments.len();
+
     filter_complex.push_str(&format!(
-        "{}concat=n={}:v=0:a=1[outa]",
-        segments
-            .iter()
-            .enumerate()
-            .map(|(i, _)| format!("[a{}]", i))
-            .collect::<Vec<_>>()
-            .join(""),
-        segments.len()
+        "{segment_refs}concat=n={segment_count}:v=0:a=1[outa]"
     ));
 
     // Build the command
