@@ -99,7 +99,25 @@ pub enum EditAction {
         original_locked: bool,
         new_locked: bool,
     },
-    // TODO: Add actions for TrackRelationship changes
+    /// Added a relationship between two tracks.
+    AddRelationship {
+        source_id: TrackId,
+        target_id: TrackId,
+        relationship: super::multi_track::TrackRelationship,
+    },
+    /// Removed a relationship between two tracks.
+    RemoveRelationship {
+        source_id: TrackId,
+        target_id: TrackId,
+        original_relationship: super::multi_track::TrackRelationship, // Need the original to undo
+    },
+    /// Updated an existing relationship between two tracks.
+    UpdateRelationship {
+        source_id: TrackId,
+        target_id: TrackId,
+        original_relationship: super::multi_track::TrackRelationship,
+        new_relationship: super::multi_track::TrackRelationship,
+    },
 }
 
 /// Defines methods for applying and undoing timeline actions.
@@ -286,6 +304,56 @@ impl UndoableAction for EditAction {
                 track.set_locked(*new_locked);
                 Ok(())
             }
+            EditAction::AddRelationship {
+                source_id,
+                target_id,
+                relationship,
+            } => {
+                // Check track existence *before* getting mutable borrow of manager
+                if !timeline.has_track(*source_id) {
+                    return Err(TimelineError::TrackNotFound(*source_id));
+                }
+                if !timeline.has_track(*target_id) {
+                    return Err(TimelineError::TrackNotFound(*target_id));
+                }
+                // Use the new method that skips internal timeline checks
+                timeline
+                    .multi_track_manager_mut()
+                    .add_relationship_no_timeline_check(*source_id, *target_id, *relationship)
+                    .map_err(TimelineError::MultiTrack)
+            }
+            EditAction::RemoveRelationship {
+                source_id,
+                target_id,
+                ..
+            } => {
+                // remove_relationship likely doesn't need &Timeline, so it should be fine.
+                timeline
+                    .multi_track_manager_mut()
+                    .remove_relationship(*source_id, *target_id)
+                    .map_err(TimelineError::MultiTrack)
+            }
+            EditAction::UpdateRelationship {
+                source_id,
+                target_id,
+                original_relationship: _, // Original needed only for undo
+                new_relationship,
+            } => {
+                // Check track existence *before* getting mutable borrow of manager
+                if !timeline.has_track(*source_id) {
+                    return Err(TimelineError::TrackNotFound(*source_id));
+                }
+                if !timeline.has_track(*target_id) {
+                    return Err(TimelineError::TrackNotFound(*target_id));
+                }
+                // Apply as remove + add_no_timeline_check
+                let manager = timeline.multi_track_manager_mut();
+                manager.remove_relationship(*source_id, *target_id)?; // Propagate potential error
+                // Use the new method that skips internal timeline checks
+                manager
+                    .add_relationship_no_timeline_check(*source_id, *target_id, *new_relationship)
+                    .map_err(TimelineError::MultiTrack)
+            }
         }
     }
 
@@ -463,6 +531,71 @@ impl UndoableAction for EditAction {
                     .ok_or(TimelineError::TrackNotFound(*track_id))?;
                 track.set_locked(*original_locked);
                 Ok(())
+            }
+            EditAction::AddRelationship {
+                source_id,
+                target_id,
+                ..
+            } => {
+                // remove_relationship should be fine
+                timeline
+                    .multi_track_manager_mut()
+                    .remove_relationship(*source_id, *target_id)
+                    .map_err(TimelineError::MultiTrack)
+            }
+            EditAction::RemoveRelationship {
+                source_id,
+                target_id,
+                original_relationship,
+            } => {
+                // Check track existence *before* getting mutable borrow of manager
+                if !timeline.has_track(*source_id) {
+                    return Err(TimelineError::InvalidOperation(format!(
+                        "Cannot undo RemoveRelationship: Source track {} not found",
+                        source_id
+                    )));
+                }
+                if !timeline.has_track(*target_id) {
+                    return Err(TimelineError::InvalidOperation(format!(
+                        "Cannot undo RemoveRelationship: Target track {} not found",
+                        target_id
+                    )));
+                }
+                // Undo removing by adding the original back, using the new method
+                timeline
+                    .multi_track_manager_mut()
+                    .add_relationship_no_timeline_check(
+                        *source_id,
+                        *target_id,
+                        *original_relationship,
+                    )
+                    .map_err(TimelineError::MultiTrack)
+            }
+            EditAction::UpdateRelationship {
+                source_id,
+                target_id,
+                original_relationship,
+                new_relationship: _, // New needed only for apply
+            } => {
+                // Check track existence *before* getting mutable borrow of manager
+                if !timeline.has_track(*source_id) {
+                    return Err(TimelineError::TrackNotFound(*source_id));
+                }
+                if !timeline.has_track(*target_id) {
+                    return Err(TimelineError::TrackNotFound(*target_id));
+                }
+                // Undo updating by setting it back to the original (remove potentially new, add original)
+                let manager = timeline.multi_track_manager_mut();
+                // Assuming the relationship to remove *might* be the new one.
+                let _ = manager.remove_relationship(*source_id, *target_id); // Ignore error if it didn't exist
+                // Use the new method that skips internal timeline checks
+                manager
+                    .add_relationship_no_timeline_check(
+                        *source_id,
+                        *target_id,
+                        *original_relationship,
+                    )
+                    .map_err(TimelineError::MultiTrack)
             }
         }
     }
@@ -1232,10 +1365,8 @@ mod tests {
         );
     }
 
-    // TODO: Add tests for SplitClip apply/undo
-    // TODO: Add tests for MergeClips apply/undo
-    // TODO: Add tests for SetTrackName, SetTrackMuted, SetTrackLocked apply/undo
-    // TODO: Add tests for transaction apply/undo including these new actions
+    // TODO: Add tests for TrackRelationship actions (Add, Remove, Update) apply/undo
+    // TODO: Ensure multi_track_manager methods handle potential borrow issues when called from apply/undo
 
     // ... keep existing tests but mark them as needing update or remove if redundant ...
 }

@@ -135,6 +135,46 @@ impl MultiTrackManager {
         Ok(())
     }
 
+    /// Adds a relationship assuming tracks exist and without checking timeline.
+    ///
+    /// This is intended for internal use (like undo/redo) where existence checks
+    /// are performed beforehand.
+    ///
+    /// # Arguments
+    ///
+    /// * `source_id` - The ID of the source track.
+    /// * `target_id` - The ID of the target track.
+    /// * `relationship` - The type of relationship to establish.
+    ///
+    /// # Errors
+    ///
+    /// Returns `MultiTrackError::CircularDependency` if the relationship creates a cycle.
+    pub(crate) fn add_relationship_no_timeline_check(
+        &mut self,
+        source_id: TrackId,
+        target_id: TrackId,
+        relationship: TrackRelationship,
+    ) -> Result<()> {
+        // Check for circular dependencies
+        if self.would_create_circular_dependency(source_id, target_id) {
+            return Err(MultiTrackError::CircularDependency(source_id, target_id));
+        }
+
+        // Update dependencies
+        self.dependencies
+            .entry(source_id)
+            .or_default()
+            .insert(target_id, relationship);
+
+        // Update reverse dependencies
+        self.reverse_dependencies
+            .entry(target_id)
+            .or_default()
+            .insert(source_id);
+
+        Ok(())
+    }
+
     /// Removes a relationship between two tracks.
     ///
     /// # Arguments
