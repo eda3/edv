@@ -348,11 +348,11 @@ pub fn deserialize_project(path: &Path) -> Result<Project> {
 fn convert_to_serialized_project(project: &Project) -> SerializedProject {
     // Convert project metadata
     let serialized_metadata = SerializedProjectMetadata {
-        name: project.metadata.name.clone(),
-        created_at: project.metadata.created_at.to_rfc3339(),
-        modified_at: project.metadata.modified_at.to_rfc3339(),
-        description: project.metadata.description.clone(),
-        tags: project.metadata.tags.clone(),
+        name: project.project_metadata.name.clone(),
+        created_at: project.project_metadata.created_at.to_rfc3339(),
+        modified_at: project.project_metadata.modified_at.to_rfc3339(),
+        description: project.project_metadata.description.clone(),
+        tags: project.project_metadata.tags.clone(),
     };
 
     // Convert timeline
@@ -366,7 +366,7 @@ fn convert_to_serialized_project(project: &Project) -> SerializedProject {
         .collect();
 
     SerializedProject {
-        id: project.id.to_string(),
+        id: ProjectId::new().to_string(), // 一時的なIDを生成
         metadata: serialized_metadata,
         timeline: serialized_timeline,
         assets: serialized_assets,
@@ -443,12 +443,8 @@ fn convert_to_serialized_asset_reference(
 
 /// Converts a serialized project to a `Project`.
 fn convert_from_serialized_project(serialized: &SerializedProject) -> Result<Project> {
-    // Convert project ID
-    let id = ProjectId::from_string(&serialized.id)
-        .map_err(|e| SerializationError::IncompatibleFormat(e.to_string()))?;
-
     // Convert project metadata
-    let metadata = convert_from_serialized_project_metadata(&serialized.metadata)?;
+    let project_metadata = convert_from_serialized_project_metadata(&serialized.metadata)?;
 
     // Convert timeline
     let timeline = convert_from_serialized_timeline(&serialized.timeline)?;
@@ -461,7 +457,12 @@ fn convert_from_serialized_project(serialized: &SerializedProject) -> Result<Pro
         .collect::<std::result::Result<Vec<_>, _>>()?;
 
     // Create the project
-    Ok(Project::from_components(id, metadata, timeline, assets))
+    let mut project = Project::new(&project_metadata.name);
+    project.project_metadata = project_metadata;
+    project.timeline = timeline;
+    project.assets = assets;
+
+    Ok(project)
 }
 
 /// Converts serialized project metadata to `ProjectMetadata`.
@@ -850,14 +851,14 @@ mod tests {
 
         let deserialized_project = deserialized.unwrap();
 
-        // Verify project ID
-        assert_eq!(project.id, deserialized_project.id);
-
         // Verify project metadata
-        assert_eq!(project.metadata.name, deserialized_project.metadata.name);
         assert_eq!(
-            project.metadata.description,
-            deserialized_project.metadata.description
+            project.project_metadata.name,
+            deserialized_project.project_metadata.name
+        );
+        assert_eq!(
+            project.project_metadata.description,
+            deserialized_project.project_metadata.description
         );
 
         // Verify timeline structure

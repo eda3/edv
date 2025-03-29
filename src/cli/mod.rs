@@ -58,6 +58,14 @@ pub enum Error {
     /// Core error
     #[error("Core error: {0}")]
     Core(#[from] crate::core::Error),
+
+    /// Project error
+    #[error("Project error: {0}")]
+    ProjectError(String),
+
+    /// Render error
+    #[error("Render error: {0}")]
+    RenderError(String),
 }
 
 /// Result type for CLI operations

@@ -289,6 +289,56 @@ impl TimePosition {
 
         format!("{hours:02}:{minutes:02}:{seconds:02}:{frames:02}")
     }
+
+    /// Creates a time position from a string.
+    ///
+    /// The string can be in one of these formats:
+    /// - Seconds: "123.45"
+    /// - Hours:Minutes:Seconds: "01:23:45"
+    /// - Hours:Minutes:Seconds.Milliseconds: "01:23:45.678"
+    ///
+    /// # Returns
+    ///
+    /// Result containing the parsed TimePosition, or an error if parsing failed.
+    pub fn parse(s: &str) -> Result<Self, String> {
+        // Try to parse as seconds
+        if let Ok(seconds) = s.parse::<f64>() {
+            return Ok(Self::from_seconds(seconds));
+        }
+
+        // Try to parse as HH:MM:SS or HH:MM:SS.mmm
+        let parts: Vec<&str> = s.split(':').collect();
+        if parts.len() == 3 {
+            let hours = parts[0]
+                .parse::<f64>()
+                .map_err(|_| format!("Invalid hours: {}", parts[0]))?;
+            let minutes = parts[1]
+                .parse::<f64>()
+                .map_err(|_| format!("Invalid minutes: {}", parts[1]))?;
+
+            // Handle seconds which might have milliseconds
+            let seconds_parts: Vec<&str> = parts[2].split('.').collect();
+            let seconds = seconds_parts[0]
+                .parse::<f64>()
+                .map_err(|_| format!("Invalid seconds: {}", seconds_parts[0]))?;
+
+            let millis = if seconds_parts.len() > 1 {
+                let ms_str = seconds_parts[1];
+                let padding = 3 - ms_str.len(); // Ensure correct scaling for partial ms digits
+                let ms_val = ms_str
+                    .parse::<f64>()
+                    .map_err(|_| format!("Invalid milliseconds: {}", ms_str))?;
+                ms_val * 10f64.powi(-(ms_str.len() as i32))
+            } else {
+                0.0
+            };
+
+            let total_seconds = hours * 3600.0 + minutes * 60.0 + seconds + millis;
+            return Ok(Self::from_seconds(total_seconds));
+        }
+
+        Err(format!("Invalid time format: {}", s))
+    }
 }
 
 impl Add<Duration> for TimePosition {

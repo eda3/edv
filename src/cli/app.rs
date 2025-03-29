@@ -11,6 +11,7 @@ use crate::core::console::ConsoleLogger;
 use crate::core::{Config, Context, LogLevel, Logger};
 
 use super::{CommandRegistry, Result};
+use crate::cli::commands;
 
 /// CLI application structure.
 ///
@@ -144,8 +145,16 @@ impl App {
     ///
     /// `Result<()>` indicating success or failure.
     fn register_commands(&mut self) -> Result<()> {
-        // Implementation will be added when commands are implemented
-        // This is a placeholder to avoid compiler warnings
+        // TODO: Uncomment these when other commands are implemented
+        // self.command_registry.register(Box::new(commands::TrimCommand::new()))?;
+        // self.command_registry.register(Box::new(commands::ConcatCommand::new()))?;
+        // self.command_registry.register(Box::new(commands::ConvertCommand::new()))?;
+        // self.command_registry.register(Box::new(commands::InfoCommand::new()))?;
+
+        // Register our new render command
+        self.command_registry
+            .register(Box::new(commands::RenderCommand::new()))?;
+
         Ok(())
     }
 

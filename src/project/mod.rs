@@ -2,42 +2,153 @@ use chrono::{DateTime, Utc};
 /// Project management functionality.
 ///
 /// This module provides functionality for creating, editing, and managing
-/// video editing projects, including timeline editing, asset management,
-/// and project serialization/deserialization.
+/// video editing projects, including timelines, assets, and metadata.
 use std::collections::HashMap;
 use std::path::PathBuf;
 use std::str::FromStr;
 use uuid::Uuid;
 
+use crate::utility::time::Duration;
+
+pub mod rendering;
 pub mod serialization;
 pub mod timeline;
+
+// Export types for convenience
+use timeline::{TrackId, TrackKind};
+
+/// Asset ID for resources used in projects.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub struct AssetId(Uuid);
+
+impl AssetId {
+    /// Creates a new random asset ID.
+    #[must_use]
+    pub fn new() -> Self {
+        Self(Uuid::new_v4())
+    }
+
+    /// Returns a reference to the UUID.
+    #[must_use]
+    pub fn as_uuid_ref(&self) -> &Uuid {
+        &self.0
+    }
+}
+
+impl std::fmt::Display for AssetId {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "{}", self.0)
+    }
+}
+
+impl Default for AssetId {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+impl FromStr for AssetId {
+    type Err = uuid::Error;
+
+    fn from_str(s: &str) -> std::result::Result<Self, Self::Err> {
+        Ok(Self(Uuid::parse_str(s)?))
+    }
+}
+
+/// Clip ID for timeline clips.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub struct ClipId(Uuid);
+
+impl ClipId {
+    /// Creates a new random clip ID.
+    #[must_use]
+    pub fn new() -> Self {
+        Self(Uuid::new_v4())
+    }
+
+    /// Returns a reference to the UUID.
+    #[must_use]
+    pub fn as_uuid_ref(&self) -> &Uuid {
+        &self.0
+    }
+}
+
+impl std::fmt::Display for ClipId {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "{}", self.0)
+    }
+}
+
+impl Default for ClipId {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+impl FromStr for ClipId {
+    type Err = uuid::Error;
+
+    fn from_str(s: &str) -> std::result::Result<Self, Self::Err> {
+        Ok(Self(Uuid::parse_str(s)?))
+    }
+}
+
+/// Asset metadata.
+#[derive(Debug, Clone)]
+pub struct AssetMetadata {
+    /// Duration of the asset.
+    pub duration: Option<Duration>,
+    /// Dimensions of the asset (width, height).
+    pub dimensions: Option<(u32, u32)>,
+    /// Type of asset (e.g., "video", "audio", "image").
+    pub asset_type: String,
+    /// Additional metadata.
+    pub extra: std::collections::HashMap<String, String>,
+}
+
+/// Asset reference with path and metadata.
+#[derive(Debug, Clone)]
+pub struct AssetReference {
+    /// ID of the asset.
+    pub id: AssetId,
+    /// Path to the asset file.
+    pub path: PathBuf,
+    /// Metadata for the asset.
+    pub metadata: AssetMetadata,
+}
 
 /// Error types specific to project operations.
 #[derive(Debug, thiserror::Error)]
 pub enum ProjectError {
-    /// Error when operating on a timeline.
+    /// Timeline error.
     #[error("Timeline error: {0}")]
     Timeline(#[from] timeline::TimelineError),
 
-    /// Error during serialization or deserialization.
+    /// File I/O error.
+    #[error("I/O error: {0}")]
+    Io(#[from] std::io::Error),
+
+    /// Serialization error.
     #[error("Serialization error: {0}")]
-    Serialization(#[from] serialization::SerializationError),
+    Serialization(String),
 
-    /// Error when parsing an ID.
-    #[error("Invalid ID format: {0}")]
-    InvalidId(String),
-
-    /// Error when an asset is not found.
+    /// Asset not found.
     #[error("Asset not found: {0}")]
     AssetNotFound(AssetId),
 
-    /// Error during file operations.
-    #[error("File error: {0}")]
-    FileError(#[from] std::io::Error),
+    /// Rendering error.
+    #[error("Rendering error: {0}")]
+    Rendering(#[from] rendering::RenderError),
 }
 
 /// Type alias for project operation results.
 pub type Result<T> = std::result::Result<T, ProjectError>;
+
+impl From<serialization::SerializationError> for ProjectError {
+    fn from(err: serialization::SerializationError) -> Self {
+        ProjectError::Serialization(err.to_string())
+    }
+}
 
 /// Unique identifier for a project.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
@@ -56,7 +167,7 @@ impl ProjectId {
     ///
     /// Returns an error if the string is not a valid UUID.
     pub fn from_string(s: &str) -> Result<Self> {
-        let uuid = Uuid::from_str(s).map_err(|e| ProjectError::InvalidId(e.to_string()))?;
+        let uuid = Uuid::from_str(s).map_err(|e| ProjectError::Serialization(e.to_string()))?;
         Ok(Self(uuid))
     }
 }
@@ -68,70 +179,6 @@ impl std::fmt::Display for ProjectId {
 }
 
 impl Default for ProjectId {
-    fn default() -> Self {
-        Self::new()
-    }
-}
-
-/// Unique identifier for a clip.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
-pub struct ClipId(Uuid);
-
-impl ClipId {
-    /// Creates a new random clip ID.
-    #[must_use]
-    pub fn new() -> Self {
-        Self(Uuid::new_v4())
-    }
-}
-
-impl std::fmt::Display for ClipId {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        write!(f, "{}", self.0)
-    }
-}
-
-impl std::str::FromStr for ClipId {
-    type Err = uuid::Error;
-
-    fn from_str(s: &str) -> std::result::Result<Self, Self::Err> {
-        Ok(Self(Uuid::from_str(s)?))
-    }
-}
-
-impl Default for ClipId {
-    fn default() -> Self {
-        Self::new()
-    }
-}
-
-/// Unique identifier for an asset.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
-pub struct AssetId(Uuid);
-
-impl AssetId {
-    /// Creates a new random asset ID.
-    #[must_use]
-    pub fn new() -> Self {
-        Self(Uuid::new_v4())
-    }
-}
-
-impl std::fmt::Display for AssetId {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        write!(f, "{}", self.0)
-    }
-}
-
-impl std::str::FromStr for AssetId {
-    type Err = uuid::Error;
-
-    fn from_str(s: &str) -> std::result::Result<Self, Self::Err> {
-        Ok(Self(Uuid::from_str(s)?))
-    }
-}
-
-impl Default for AssetId {
     fn default() -> Self {
         Self::new()
     }
@@ -180,87 +227,39 @@ impl ProjectMetadata {
     }
 }
 
-/// Metadata for an asset.
-#[derive(Debug, Clone)]
-pub struct AssetMetadata {
-    /// Duration of the asset.
-    pub duration: Option<crate::utility::time::Duration>,
-
-    /// Dimensions of the asset (width, height).
-    pub dimensions: Option<(u32, u32)>,
-
-    /// Type of the asset (e.g., "video", "audio", "image").
-    pub asset_type: String,
-
-    /// Additional metadata as key-value pairs.
-    pub extra: HashMap<String, String>,
-}
-
-/// Reference to an asset used in a project.
-#[derive(Debug, Clone)]
-pub struct AssetReference {
-    /// Unique identifier for the asset.
-    pub id: AssetId,
-
-    /// Path to the asset file.
-    pub path: PathBuf,
-
-    /// Metadata for the asset.
-    pub metadata: AssetMetadata,
-}
-
 /// A video editing project.
 #[derive(Debug, Clone)]
 pub struct Project {
-    /// Unique identifier for the project.
-    pub id: ProjectId,
-
-    /// Project metadata.
-    pub metadata: ProjectMetadata,
-
-    /// Timeline for the project.
+    /// Name of the project.
+    pub name: String,
+    /// Timeline of the project.
     pub timeline: timeline::Timeline,
-
     /// Assets used in the project.
     pub assets: Vec<AssetReference>,
+    /// Additional metadata.
+    pub metadata: std::collections::HashMap<String, String>,
+    /// Project metadata
+    pub project_metadata: ProjectMetadata,
 }
 
 impl Project {
-    /// Creates a new empty project with the given name.
+    /// Creates a new project with the given name.
     ///
     /// # Arguments
     ///
     /// * `name` - The name of the project
+    ///
+    /// # Returns
+    ///
+    /// A new `Project` instance.
     #[must_use]
     pub fn new(name: &str) -> Self {
         Self {
-            id: ProjectId::new(),
-            metadata: ProjectMetadata::new(name),
+            name: name.to_string(),
             timeline: timeline::Timeline::new(),
             assets: Vec::new(),
-        }
-    }
-
-    /// Creates a project from its components.
-    ///
-    /// # Arguments
-    ///
-    /// * `id` - The project ID
-    /// * `metadata` - The project metadata
-    /// * `timeline` - The project timeline
-    /// * `assets` - The project assets
-    #[must_use]
-    pub fn from_components(
-        id: ProjectId,
-        metadata: ProjectMetadata,
-        timeline: timeline::Timeline,
-        assets: Vec<AssetReference>,
-    ) -> Self {
-        Self {
-            id,
-            metadata,
-            timeline,
-            assets,
+            metadata: std::collections::HashMap::new(),
+            project_metadata: ProjectMetadata::new(name),
         }
     }
 
@@ -269,15 +268,16 @@ impl Project {
     /// # Arguments
     ///
     /// * `path` - The path to the asset file
-    /// * `metadata` - The metadata for the asset
+    /// * `metadata` - Metadata for the asset
     ///
     /// # Returns
     ///
-    /// The ID of the added asset.
+    /// The ID of the newly added asset.
     pub fn add_asset(&mut self, path: PathBuf, metadata: AssetMetadata) -> AssetId {
         let id = AssetId::new();
-        self.assets.push(AssetReference { id, path, metadata });
-        self.metadata.update_modified();
+        let asset = AssetReference { id, path, metadata };
+        self.assets.push(asset);
+        self.project_metadata.update_modified();
         id
     }
 
@@ -294,6 +294,19 @@ impl Project {
         self.assets.iter().find(|asset| asset.id == id)
     }
 
+    /// Gets a mutable reference to an asset by its ID.
+    ///
+    /// # Arguments
+    ///
+    /// * `id` - The ID of the asset to find
+    ///
+    /// # Returns
+    ///
+    /// A mutable reference to the asset if found, or `None` if not found.
+    pub fn get_asset_mut(&mut self, id: AssetId) -> Option<&mut AssetReference> {
+        self.assets.iter_mut().find(|asset| asset.id == id)
+    }
+
     /// Removes an asset from the project.
     ///
     /// # Arguments
@@ -302,15 +315,16 @@ impl Project {
     ///
     /// # Returns
     ///
-    /// `true` if the asset was found and removed, `false` otherwise.
-    pub fn remove_asset(&mut self, id: AssetId) -> bool {
-        let len = self.assets.len();
-        self.assets.retain(|asset| asset.id != id);
-        let removed = self.assets.len() < len;
-        if removed {
-            self.metadata.update_modified();
-        }
-        removed
+    /// `Ok(())` if the asset was found and removed, or an error if not found.
+    pub fn remove_asset(&mut self, id: AssetId) -> Result<()> {
+        let index = self
+            .assets
+            .iter()
+            .position(|asset| asset.id == id)
+            .ok_or(ProjectError::AssetNotFound(id))?;
+        self.assets.remove(index);
+        self.project_metadata.update_modified();
+        Ok(())
     }
 
     /// Saves the project to a file.
@@ -323,8 +337,11 @@ impl Project {
     ///
     /// Returns an error if the project could not be saved.
     pub fn save(&self, path: &std::path::Path) -> Result<()> {
-        self.metadata.clone().update_modified();
-        serialization::serialize_project(self, path)?;
+        self.project_metadata.clone().update_modified();
+        let result = serialization::serialize_project(self, path);
+        if let Err(err) = result {
+            return Err(ProjectError::Serialization(err.to_string()));
+        }
         Ok(())
     }
 
@@ -342,7 +359,40 @@ impl Project {
     ///
     /// Returns an error if the project could not be loaded.
     pub fn load(path: &std::path::Path) -> Result<Self> {
-        let project = serialization::deserialize_project(path)?;
-        Ok(project)
+        let result = serialization::deserialize_project(path);
+        if let Err(err) = result {
+            return Err(ProjectError::Serialization(err.to_string()));
+        }
+        Ok(result.unwrap())
+    }
+
+    /// Renders the project to a video file using default settings.
+    ///
+    /// # Arguments
+    ///
+    /// * `output_path` - The path where the rendered video will be saved
+    ///
+    /// # Returns
+    ///
+    /// A `Result` containing rendering results if successful.
+    pub fn render(&self, output_path: &std::path::Path) -> Result<rendering::RenderResult> {
+        let config = rendering::RenderConfig::new(output_path.to_path_buf());
+        self.render_with_config(config)
+    }
+
+    /// Renders the project with the specified configuration.
+    ///
+    /// # Arguments
+    ///
+    /// * `config` - The rendering configuration
+    ///
+    /// # Returns
+    ///
+    /// A `Result` containing rendering results if successful.
+    pub fn render_with_config(
+        &self,
+        config: rendering::RenderConfig,
+    ) -> Result<rendering::RenderResult> {
+        rendering::render_project(self.clone(), config).map_err(ProjectError::Rendering)
     }
 }
