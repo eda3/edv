@@ -312,3 +312,376 @@ impl EditHistory {
 
 // TODO: Implement apply/undo logic within Timeline based on returned HistoryEntry
 // TODO: Add unit tests for EditHistory, including transactions
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::project::timeline::{Clip, Track, TrackId, TrackKind};
+    use crate::project::{AssetId, ClipId};
+    use crate::utility::time::{Duration, TimePosition};
+    use std::collections::HashMap;
+
+    // Helper function to create a dummy clip
+    fn create_dummy_clip(id: ClipId, asset_id: AssetId, pos: f64, dur: f64) -> Clip {
+        Clip::new(
+            id,
+            asset_id,
+            TimePosition::from_seconds(pos),
+            Duration::from_seconds(dur),
+            TimePosition::from_seconds(0.0),
+            TimePosition::from_seconds(dur),
+        )
+    }
+
+    // Helper function to create a dummy track
+    fn create_dummy_track(id: TrackId, kind: TrackKind) -> Track {
+        Track::new(id, kind)
+    }
+
+    #[test]
+    fn test_new_history() {
+        let history = EditHistory::new(Some(10));
+        assert_eq!(history.capacity, Some(10));
+        assert!(history.undo_stack.is_empty());
+        assert!(history.redo_stack.is_empty());
+        assert!(history.current_transaction.is_none());
+        assert!(!history.can_undo());
+        assert!(!history.can_redo());
+    }
+
+    #[test]
+    fn test_record_single_action() {
+        let mut history = EditHistory::new(None);
+        let clip_id = ClipId::new();
+        let track_id = TrackId::new();
+        let action = EditAction::SetClipPosition {
+            clip_id,
+            track_id,
+            original_position: TimePosition::from_seconds(0.0),
+            new_position: TimePosition::from_seconds(10.0),
+        };
+
+        history.record_action(action.clone());
+
+        assert_eq!(history.undo_stack.len(), 1);
+        assert!(history.redo_stack.is_empty());
+        assert!(history.can_undo());
+        assert!(!history.can_redo());
+
+        match &history.undo_stack[0] {
+            HistoryEntry::Single(recorded_action) => {
+                // Basic check, ideally use PartialEq if derived
+                assert!(matches!(
+                    recorded_action,
+                    EditAction::SetClipPosition { .. }
+                ));
+            }
+            _ => panic!("Expected Single entry"),
+        }
+    }
+
+    #[test]
+    fn test_undo_redo_single_action() {
+        let mut history = EditHistory::new(None);
+        let clip_id = ClipId::new();
+        let track_id = TrackId::new();
+        let action = EditAction::SetClipPosition {
+            clip_id,
+            track_id,
+            original_position: TimePosition::from_seconds(0.0),
+            new_position: TimePosition::from_seconds(10.0),
+        };
+
+        history.record_action(action.clone());
+
+        // Undo
+        let undo_result = history.undo();
+        assert!(undo_result.is_ok());
+        assert!(!history.can_undo());
+        assert!(history.can_redo());
+        assert_eq!(history.undo_stack.len(), 0);
+        assert_eq!(history.redo_stack.len(), 1);
+
+        if let Ok(HistoryEntry::Single(undone_action)) = undo_result {
+            assert!(matches!(undone_action, EditAction::SetClipPosition { .. }));
+        } else {
+            panic!("Undo failed or returned wrong type");
+        }
+
+        // Redo
+        let redo_result = history.redo();
+        assert!(redo_result.is_ok());
+        assert!(history.can_undo());
+        assert!(!history.can_redo());
+        assert_eq!(history.undo_stack.len(), 1);
+        assert_eq!(history.redo_stack.len(), 0);
+
+        if let Ok(HistoryEntry::Single(redone_action)) = redo_result {
+            assert!(matches!(redone_action, EditAction::SetClipPosition { .. }));
+        } else {
+            panic!("Redo failed or returned wrong type");
+        }
+    }
+
+    #[test]
+    fn test_record_clears_redo_stack() {
+        let mut history = EditHistory::new(None);
+        let clip_id = ClipId::new();
+        let track_id = TrackId::new();
+        let action1 = EditAction::SetClipPosition {
+            clip_id,
+            track_id,
+            original_position: TimePosition::zero(),
+            new_position: TimePosition::from_seconds(5.0),
+        };
+        let action2 = EditAction::SetClipPosition {
+            clip_id,
+            track_id,
+            original_position: TimePosition::from_seconds(5.0),
+            new_position: TimePosition::from_seconds(10.0),
+        };
+
+        history.record_action(action1.clone());
+        let _ = history.undo(); // Move action1 to redo stack
+        assert!(history.can_redo());
+
+        history.record_action(action2.clone()); // This should clear the redo stack
+        assert!(!history.can_redo());
+        assert_eq!(history.redo_stack.len(), 0);
+        assert_eq!(history.undo_stack.len(), 1); // action2 is on undo stack
+    }
+
+    #[test]
+    fn test_transaction_commit() {
+        let mut history = EditHistory::new(None);
+        let clip_id = ClipId::new();
+        let track_id = TrackId::new();
+        let action1 = EditAction::SetClipPosition {
+            clip_id,
+            track_id,
+            original_position: TimePosition::zero(),
+            new_position: TimePosition::from_seconds(5.0),
+        };
+        let action2 = EditAction::SetClipDuration {
+            clip_id,
+            track_id,
+            original_duration: Duration::from_seconds(10.0),
+            new_duration: Duration::from_seconds(8.0),
+            original_source_end: TimePosition::from_seconds(10.0),
+            new_source_end: TimePosition::from_seconds(8.0),
+        };
+
+        assert!(
+            history
+                .begin_transaction(Some("Clip Edit".to_string()))
+                .is_ok()
+        );
+        history.record_action(action1.clone());
+        history.record_action(action2.clone());
+        assert!(history.commit_transaction().is_ok());
+
+        assert_eq!(history.undo_stack.len(), 1);
+        assert!(history.can_undo());
+        assert!(!history.can_redo());
+        assert!(history.current_transaction.is_none());
+
+        match &history.undo_stack[0] {
+            HistoryEntry::Group(group) => {
+                assert_eq!(group.actions.len(), 2);
+                assert_eq!(group.description(), Some("Clip Edit"));
+                assert!(matches!(
+                    group.actions[0],
+                    EditAction::SetClipPosition { .. }
+                ));
+                assert!(matches!(
+                    group.actions[1],
+                    EditAction::SetClipDuration { .. }
+                ));
+            }
+            _ => panic!("Expected Group entry"),
+        }
+    }
+
+    #[test]
+    fn test_transaction_rollback() {
+        let mut history = EditHistory::new(None);
+        let clip_id = ClipId::new();
+        let track_id = TrackId::new();
+        let action1 = EditAction::SetClipPosition {
+            clip_id,
+            track_id,
+            original_position: TimePosition::zero(),
+            new_position: TimePosition::from_seconds(5.0),
+        };
+
+        assert!(history.begin_transaction(None).is_ok());
+        history.record_action(action1.clone());
+        assert!(history.rollback_transaction().is_ok());
+
+        assert!(history.undo_stack.is_empty());
+        assert!(history.redo_stack.is_empty());
+        assert!(!history.can_undo());
+        assert!(!history.can_redo());
+        assert!(history.current_transaction.is_none());
+    }
+
+    #[test]
+    fn test_undo_redo_transaction() {
+        let mut history = EditHistory::new(None);
+        let clip_id = ClipId::new();
+        let track_id = TrackId::new();
+        let action1 = EditAction::SetClipPosition {
+            clip_id,
+            track_id,
+            original_position: TimePosition::zero(),
+            new_position: TimePosition::from_seconds(5.0),
+        };
+        let action2 = EditAction::SetClipDuration {
+            clip_id,
+            track_id,
+            original_duration: Duration::from_seconds(10.0),
+            new_duration: Duration::from_seconds(8.0),
+            original_source_end: TimePosition::from_seconds(10.0),
+            new_source_end: TimePosition::from_seconds(8.0),
+        };
+
+        // Record and commit transaction
+        history.begin_transaction(None).unwrap();
+        history.record_action(action1.clone());
+        history.record_action(action2.clone());
+        history.commit_transaction().unwrap();
+
+        // Undo the transaction
+        let undo_result = history.undo();
+        assert!(undo_result.is_ok());
+        assert!(!history.can_undo());
+        assert!(history.can_redo());
+
+        if let Ok(HistoryEntry::Group(group)) = undo_result {
+            assert_eq!(group.actions.len(), 2);
+        } else {
+            panic!("Undo failed or returned wrong type");
+        }
+
+        // Redo the transaction
+        let redo_result = history.redo();
+        assert!(redo_result.is_ok());
+        assert!(history.can_undo());
+        assert!(!history.can_redo());
+
+        if let Ok(HistoryEntry::Group(group)) = redo_result {
+            assert_eq!(group.actions.len(), 2);
+        } else {
+            panic!("Redo failed or returned wrong type");
+        }
+    }
+
+    #[test]
+    fn test_transaction_errors() {
+        let mut history = EditHistory::new(None);
+        assert!(history.begin_transaction(None).is_ok());
+        assert_eq!(
+            history.begin_transaction(None),
+            Err(HistoryError::TransactionInProgress)
+        );
+        assert!(history.rollback_transaction().is_ok());
+        assert_eq!(
+            history.commit_transaction(),
+            Err(HistoryError::NoTransactionInProgress)
+        );
+        assert_eq!(
+            history.rollback_transaction(),
+            Err(HistoryError::NoTransactionInProgress)
+        );
+    }
+
+    #[test]
+    fn test_history_capacity() {
+        let mut history = EditHistory::new(Some(2));
+        let clip_id = ClipId::new();
+        let track_id = TrackId::new();
+
+        let action1 = EditAction::SetClipPosition {
+            clip_id,
+            track_id,
+            original_position: TimePosition::zero(),
+            new_position: TimePosition::from_seconds(1.0),
+        };
+        let action2 = EditAction::SetClipPosition {
+            clip_id,
+            track_id,
+            original_position: TimePosition::from_seconds(1.0),
+            new_position: TimePosition::from_seconds(2.0),
+        };
+        let action3 = EditAction::SetClipPosition {
+            clip_id,
+            track_id,
+            original_position: TimePosition::from_seconds(2.0),
+            new_position: TimePosition::from_seconds(3.0),
+        };
+
+        history.record_action(action1.clone());
+        history.record_action(action2.clone());
+        assert_eq!(history.undo_stack.len(), 2);
+
+        history.record_action(action3.clone());
+        assert_eq!(history.undo_stack.len(), 2); // Should have dropped action1
+
+        // Verify that action1 is gone and action2, action3 remain
+        match &history.undo_stack[0] {
+            HistoryEntry::Single(EditAction::SetClipPosition { new_position, .. }) => {
+                assert!((new_position.as_seconds() - 2.0).abs() < f64::EPSILON)
+            }
+            _ => panic!("Unexpected entry type or value at index 0"),
+        }
+        match &history.undo_stack[1] {
+            HistoryEntry::Single(EditAction::SetClipPosition { new_position, .. }) => {
+                assert!((new_position.as_seconds() - 3.0).abs() < f64::EPSILON)
+            }
+            _ => panic!("Unexpected entry type or value at index 1"),
+        }
+    }
+
+    #[test]
+    fn test_empty_transaction_commit() {
+        let mut history = EditHistory::new(None);
+        assert!(history.begin_transaction(None).is_ok());
+        assert!(history.commit_transaction().is_ok());
+        assert!(history.undo_stack.is_empty());
+        assert!(!history.can_undo());
+    }
+
+    #[test]
+    fn test_clear_history() {
+        let mut history = EditHistory::new(None);
+        let clip_id = ClipId::new();
+        let track_id = TrackId::new();
+        let action1 = EditAction::SetClipPosition {
+            clip_id,
+            track_id,
+            original_position: TimePosition::zero(),
+            new_position: TimePosition::from_seconds(5.0),
+        };
+
+        // Add an action
+        history.record_action(action1.clone());
+        assert!(history.can_undo());
+
+        // Undo it to populate redo stack
+        let _ = history.undo();
+        assert!(history.can_redo());
+
+        // Start a transaction
+        assert!(history.begin_transaction(None).is_ok());
+        history.record_action(action1);
+
+        // Clear everything
+        history.clear();
+
+        assert!(history.undo_stack.is_empty());
+        assert!(history.redo_stack.is_empty());
+        assert!(history.current_transaction.is_none());
+        assert!(!history.can_undo());
+        assert!(!history.can_redo());
+    }
+}
