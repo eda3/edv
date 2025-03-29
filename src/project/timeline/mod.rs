@@ -4,9 +4,13 @@
 /// video timelines, including tracks, clips, and multi-track relationships.
 use uuid::Uuid;
 
+pub mod history;
 pub mod multi_track;
 
 use crate::utility::time::{Duration, TimePosition};
+
+// Export history types as well
+pub use history::{EditAction, EditHistory, HistoryEntry, HistoryError, TransactionGroup};
 
 /// Error types specific to timeline operations.
 #[derive(Debug, thiserror::Error)]
