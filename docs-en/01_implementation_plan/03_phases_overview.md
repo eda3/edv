@@ -83,7 +83,7 @@ The foundation of the project has been successfully established:
 - ✅ Core video operations framework established
 - ✅ Basic configuration management implemented
 
-### Phase 2: Extended Functionality - PARTIALLY COMPLETED (75%)
+### Phase 2: Extended Functionality - PARTIALLY COMPLETED (80%)
 
 Significant progress has been made on extended functionality:
 
@@ -102,8 +102,10 @@ Significant progress has been made on extended functionality:
   - ✅ Basic timeline data model implemented (`src/project/timeline/mod.rs`)
   - ✅ Multi-track relationship management (`src/project/timeline/multi_track.rs`)
   - ✅ Track relationship serialization/deserialization (`src/project/serialization/json.rs`)
+  - ✅ Basic clip operations (splitting, moving between tracks) implemented
+  - ✅ Clip operation propagation across related tracks added
   - 🔄 Advanced timeline operations in progress
-  - 🔄 Project state persistence partially implemented
+  - 🔄 Project state persistence with selective serialization implemented
 - ✅ Error handling and logging enhanced
 
 ### Phase 3 & 4: Future Work
@@ -114,9 +116,9 @@ Work on the advanced features (Phase 3) and optimizations (Phase 4) has not yet 
 
 The immediate focus is on completing the remaining components of Phase 2:
 
-1. Finalize advanced timeline features and operations
-2. Complete project state persistence with optimized serialization
-3. Implement comprehensive timeline validation
+1. Finalize the undo/redo system for timeline operations
+2. Enhance timeline rendering with multi-track compositing
+3. Implement comprehensive timeline validation with relationship integrity checks
 4. Enhance documentation for existing functionality
 5. Improve test coverage for all components
 
