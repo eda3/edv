@@ -6,6 +6,8 @@ use crate::project::ClipId;
 /// for grouping actions into transactions.
 use crate::project::timeline::{Clip, TimelineError, Track, TrackId};
 use crate::utility::time::{Duration, TimePosition};
+// Import Timeline struct itself
+use super::Timeline;
 
 /// Represents a single, reversible action performed on the timeline.
 ///
@@ -68,8 +70,241 @@ pub enum EditAction {
     // TODO: Add actions for SplitClip, MergeClips
 }
 
-impl EditAction {
-    // TODO: Implement apply and undo methods here or via a trait
+/// Defines methods for applying and undoing timeline actions.
+///
+/// This trait is implemented by `EditAction` and potentially `TransactionGroup`.
+pub trait UndoableAction {
+    /// Applies the action to the timeline.
+    ///
+    /// # Arguments
+    ///
+    /// * `timeline` - A mutable reference to the `Timeline` to modify.
+    ///
+    /// # Errors
+    ///
+    /// Returns a `TimelineError` if applying the action fails.
+    fn apply(&self, timeline: &mut Timeline) -> Result<(), TimelineError>;
+
+    /// Undoes the action on the timeline.
+    ///
+    /// # Arguments
+    ///
+    /// * `timeline` - A mutable reference to the `Timeline` to revert.
+    ///
+    /// # Errors
+    ///
+    /// Returns a `TimelineError` if undoing the action fails.
+    fn undo(&self, timeline: &mut Timeline) -> Result<(), TimelineError>;
+}
+
+impl UndoableAction for EditAction {
+    /// Applies the specific `EditAction` variant to the timeline.
+    ///
+    /// # Errors
+    ///
+    /// Propagates errors from the underlying timeline operations.
+    fn apply(&self, timeline: &mut Timeline) -> Result<(), TimelineError> {
+        match self {
+            EditAction::AddClip { track_id, clip } => {
+                // Simply add the clip (we assume it was valid when recorded)
+                timeline.add_clip(*track_id, clip.clone())
+            }
+            EditAction::RemoveClip { track_id, clip, .. } => {
+                // Remove the clip by ID
+                timeline.remove_clip(*track_id, clip.id())
+            }
+            EditAction::MoveClip {
+                clip_id,
+                new_track_id,
+                new_position,
+                ..
+            } => {
+                let source_track_id =
+                    timeline
+                        .find_track_containing_clip(*clip_id)
+                        .ok_or_else(|| {
+                            // Use a more specific error if possible, or log the clip_id
+                            TimelineError::InvalidOperation(format!(
+                                "Cannot apply MoveClip: Source track for clip {} not found",
+                                clip_id
+                            ))
+                        })?;
+
+                timeline.move_clip_to_track(
+                    source_track_id,
+                    *new_track_id,
+                    *clip_id,
+                    Some(*new_position),
+                )
+            }
+            EditAction::SetClipDuration {
+                clip_id,
+                track_id,
+                new_duration,
+                new_source_end,
+                ..
+            } => {
+                let track = timeline
+                    .get_track_mut(*track_id)
+                    .ok_or(TimelineError::TrackNotFound(*track_id))?;
+                let clip =
+                    track
+                        .get_clip_mut(*clip_id)
+                        .ok_or_else(|| TimelineError::ClipNotFound {
+                            track: *track_id,
+                            clip: *clip_id,
+                        })?;
+                clip.set_duration(*new_duration);
+                clip.set_source_end(*new_source_end);
+                // TODO: Potentially re-sort or validate track?
+                Ok(())
+            }
+            EditAction::SetClipPosition {
+                clip_id,
+                track_id,
+                new_position,
+                ..
+            } => {
+                let track = timeline
+                    .get_track_mut(*track_id)
+                    .ok_or(TimelineError::TrackNotFound(*track_id))?;
+                let clip =
+                    track
+                        .get_clip_mut(*clip_id)
+                        .ok_or_else(|| TimelineError::ClipNotFound {
+                            track: *track_id,
+                            clip: *clip_id,
+                        })?;
+                clip.set_position(*new_position);
+                // Re-sort clips within the track after changing position
+                track
+                    .get_clips_mut()
+                    .sort_by(|a, b| a.position().partial_cmp(&b.position()).unwrap());
+                Ok(())
+            }
+            EditAction::AddTrack {
+                track_id,
+                track_kind,
+                track_name,
+            } => {
+                // Create and add the track. We assume ID collision is negligible.
+                // A more robust approach might check ID existence or use a different way to add.
+                let mut new_track = Track::new(*track_id, *track_kind);
+                new_track.set_name(track_name);
+                // Insert the track at the original index if possible, otherwise append.
+                // Need the original index here. Let's assume append for now.
+                timeline.tracks.push(new_track); // Direct access, consider a method
+                Ok(())
+            }
+            EditAction::RemoveTrack { track_data, .. } => {
+                // Remove the track by ID
+                timeline.remove_track(track_data.id())
+            } // TODO: Implement apply for other actions
+        }
+    }
+
+    /// Undoes the specific `EditAction` variant on the timeline.
+    ///
+    /// # Errors
+    ///
+    /// Propagates errors from the underlying timeline operations.
+    fn undo(&self, timeline: &mut Timeline) -> Result<(), TimelineError> {
+        match self {
+            EditAction::AddClip { track_id, clip } => {
+                // Undo adding a clip by removing it
+                timeline.remove_clip(*track_id, clip.id())
+            }
+            EditAction::RemoveClip {
+                track_id,
+                clip,
+                original_index,
+            } => {
+                let track = timeline
+                    .get_track_mut(*track_id)
+                    .ok_or(TimelineError::TrackNotFound(*track_id))?;
+                let insert_index = (*original_index).min(track.clips.len());
+                track.clips.insert(insert_index, clip.clone());
+                Ok(())
+            }
+            EditAction::MoveClip {
+                clip_id,
+                original_track_id,
+                original_position,
+                new_track_id,
+                ..
+            } => {
+                // Undo moving by moving it back
+                timeline.move_clip_to_track(
+                    *new_track_id,
+                    *original_track_id,
+                    *clip_id,
+                    Some(*original_position),
+                )
+            }
+            EditAction::SetClipDuration {
+                clip_id,
+                track_id,
+                original_duration,
+                original_source_end,
+                ..
+            } => {
+                // Undo setting duration by setting it back to original
+                let track = timeline
+                    .get_track_mut(*track_id)
+                    .ok_or(TimelineError::TrackNotFound(*track_id))?;
+                let clip =
+                    track
+                        .get_clip_mut(*clip_id)
+                        .ok_or_else(|| TimelineError::ClipNotFound {
+                            track: *track_id,
+                            clip: *clip_id,
+                        })?;
+                clip.set_duration(*original_duration);
+                clip.set_source_end(*original_source_end);
+                // TODO: Potentially re-sort or validate track?
+                Ok(())
+            }
+            EditAction::SetClipPosition {
+                clip_id,
+                track_id,
+                original_position,
+                ..
+            } => {
+                // Undo setting position by setting it back to original
+                let track = timeline
+                    .get_track_mut(*track_id)
+                    .ok_or(TimelineError::TrackNotFound(*track_id))?;
+                let clip =
+                    track
+                        .get_clip_mut(*clip_id)
+                        .ok_or_else(|| TimelineError::ClipNotFound {
+                            track: *track_id,
+                            clip: *clip_id,
+                        })?;
+                clip.set_position(*original_position);
+                // Re-sort clips within the track after changing position
+                track
+                    .get_clips_mut()
+                    .sort_by(|a, b| a.position().partial_cmp(&b.position()).unwrap());
+                Ok(())
+            }
+            EditAction::AddTrack { track_id, .. } => {
+                // Undo adding a track by removing it
+                timeline.remove_track(*track_id)
+            }
+            EditAction::RemoveTrack {
+                track_data,
+                original_index,
+            } => {
+                // Undo removing a track by adding it back at the original index
+                // Ensure index is valid
+                let insert_index = (*original_index).min(timeline.tracks.len());
+                timeline.tracks.insert(insert_index, track_data.clone());
+                // TODO: Restore relationships?
+                Ok(())
+            } // TODO: Implement undo for other actions
+        }
+    }
 }
 
 /// Represents a group of actions that should be undone/redone together.
@@ -151,6 +386,13 @@ pub enum HistoryError {
     /// No transaction is currently in progress.
     #[error("No transaction in progress")]
     NoTransactionInProgress,
+}
+
+// Implement From<TimelineError> for HistoryError to allow use of `?`
+impl From<TimelineError> for HistoryError {
+    fn from(err: TimelineError) -> Self {
+        HistoryError::ApplyActionError(err.to_string())
+    }
 }
 
 pub type HistoryResult<T> = std::result::Result<T, HistoryError>;
@@ -244,38 +486,78 @@ impl EditHistory {
         }
     }
 
-    /// Undoes the last action or transaction.
+    /// Undoes the last action or transaction, applying the changes to the timeline.
     ///
     /// Moves the undone entry to the redo stack.
-    /// The caller is responsible for applying the necessary state changes using
-    /// the information within the returned `HistoryEntry`.
+    ///
+    /// # Arguments
+    ///
+    /// * `timeline` - A mutable reference to the `Timeline` to apply the undo operation to.
     ///
     /// # Errors
     ///
     /// Returns `HistoryError::NothingToUndo` if the undo stack is empty.
-    pub fn undo(&mut self) -> HistoryResult<HistoryEntry> {
+    /// Returns `HistoryError::ApplyActionError` if applying the undo operation fails.
+    pub fn undo(&mut self, timeline: &mut Timeline) -> HistoryResult<()> {
         let entry = self.undo_stack.pop().ok_or(HistoryError::NothingToUndo)?;
-        self.redo_stack.push(entry.clone()); // Clone entry for redo stack
-        // TODO: Implement actual undo logic application here, potentially returning results
-        // For now, just return the entry - caller must apply undo
-        Ok(entry)
+
+        let result: Result<(), TimelineError> = match &entry {
+            HistoryEntry::Single(action) => action.undo(timeline),
+            HistoryEntry::Group(group) => {
+                for action in group.actions().iter().rev() {
+                    action.undo(timeline)?;
+                }
+                Ok(())
+            }
+        };
+
+        match result {
+            Ok(_) => {
+                self.redo_stack.push(entry);
+                Ok(())
+            }
+            Err(e) => {
+                self.undo_stack.push(entry);
+                Err(HistoryError::from(e))
+            }
+        }
     }
 
-    /// Redoes the last undone action or transaction.
+    /// Redoes the last undone action or transaction, applying the changes to the timeline.
     ///
     /// Moves the redone entry back to the undo stack.
-    /// The caller is responsible for applying the necessary state changes using
-    /// the information within the returned `HistoryEntry`.
+    ///
+    /// # Arguments
+    ///
+    /// * `timeline` - A mutable reference to the `Timeline` to apply the redo operation to.
     ///
     /// # Errors
     ///
     /// Returns `HistoryError::NothingToRedo` if the redo stack is empty.
-    pub fn redo(&mut self) -> HistoryResult<HistoryEntry> {
+    /// Returns `HistoryError::ApplyActionError` if applying the redo operation fails.
+    pub fn redo(&mut self, timeline: &mut Timeline) -> HistoryResult<()> {
         let entry = self.redo_stack.pop().ok_or(HistoryError::NothingToRedo)?;
-        self.undo_stack.push(entry.clone()); // Clone entry for undo stack
-        // TODO: Implement actual redo logic application here, potentially returning results
-        // For now, just return the entry - caller must apply redo
-        Ok(entry)
+
+        let result: Result<(), TimelineError> = match &entry {
+            HistoryEntry::Single(action) => action.apply(timeline),
+            HistoryEntry::Group(group) => {
+                for action in group.actions() {
+                    action.apply(timeline)?;
+                }
+                Ok(())
+            }
+        };
+
+        match result {
+            Ok(_) => {
+                self.undo_stack.push(entry);
+                Ok(())
+            }
+            Err(e) => {
+                self.redo_stack.push(entry);
+                Err(HistoryError::from(e))
+            }
+        }
     }
 
     /// Checks if there are any actions that can be undone.
@@ -310,13 +592,10 @@ impl EditHistory {
     }
 }
 
-// TODO: Implement apply/undo logic within Timeline based on returned HistoryEntry
-// TODO: Add unit tests for EditHistory, including transactions
-
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::project::timeline::{Clip, Track, TrackId, TrackKind};
+    use crate::project::timeline::{Clip, Timeline, Track, TrackId, TrackKind};
     use crate::project::{AssetId, ClipId};
     use crate::utility::time::{Duration, TimePosition};
     use std::collections::HashMap;
@@ -383,72 +662,99 @@ mod tests {
     #[test]
     fn test_undo_redo_single_action() {
         let mut history = EditHistory::new(None);
+        let mut timeline = create_test_timeline(); // Need timeline for apply/undo
+        let track_id = timeline.add_track(TrackKind::Video);
         let clip_id = ClipId::new();
-        let track_id = TrackId::new();
-        let action = EditAction::SetClipPosition {
-            clip_id,
-            track_id,
-            original_position: TimePosition::from_seconds(0.0),
-            new_position: TimePosition::from_seconds(10.0),
-        };
+        let asset_id = AssetId::new();
+        let clip = create_dummy_clip(clip_id, asset_id, 0.0, 5.0);
+        let add_action = EditAction::AddClip { track_id, clip };
 
-        history.record_action(action.clone());
+        // Apply and record
+        add_action.apply(&mut timeline).unwrap();
+        history.record_action(add_action);
 
         // Undo
-        let undo_result = history.undo();
-        assert!(undo_result.is_ok());
+        assert!(history.undo(&mut timeline).is_ok()); // Pass timeline
         assert!(!history.can_undo());
         assert!(history.can_redo());
         assert_eq!(history.undo_stack.len(), 0);
         assert_eq!(history.redo_stack.len(), 1);
-
-        if let Ok(HistoryEntry::Single(undone_action)) = undo_result {
-            assert!(matches!(undone_action, EditAction::SetClipPosition { .. }));
-        } else {
-            panic!("Undo failed or returned wrong type");
-        }
+        assert!(
+            timeline
+                .get_track(track_id)
+                .unwrap()
+                .get_clip(clip_id)
+                .is_none()
+        );
 
         // Redo
-        let redo_result = history.redo();
-        assert!(redo_result.is_ok());
+        assert!(history.redo(&mut timeline).is_ok()); // Pass timeline
         assert!(history.can_undo());
         assert!(!history.can_redo());
         assert_eq!(history.undo_stack.len(), 1);
         assert_eq!(history.redo_stack.len(), 0);
-
-        if let Ok(HistoryEntry::Single(redone_action)) = redo_result {
-            assert!(matches!(redone_action, EditAction::SetClipPosition { .. }));
-        } else {
-            panic!("Redo failed or returned wrong type");
-        }
+        assert!(
+            timeline
+                .get_track(track_id)
+                .unwrap()
+                .get_clip(clip_id)
+                .is_some()
+        );
     }
 
     #[test]
     fn test_record_clears_redo_stack() {
         let mut history = EditHistory::new(None);
+        let mut timeline = create_test_timeline();
+        let track_id = timeline.add_track(TrackKind::Video);
         let clip_id = ClipId::new();
-        let track_id = TrackId::new();
-        let action1 = EditAction::SetClipPosition {
-            clip_id,
+        let clip1 = create_dummy_clip(clip_id, AssetId::new(), 0.0, 5.0);
+        // Assume action2 represents the state *after* action1 was applied
+        let action1 = EditAction::AddClip {
             track_id,
-            original_position: TimePosition::zero(),
-            new_position: TimePosition::from_seconds(5.0),
+            clip: clip1,
         };
         let action2 = EditAction::SetClipPosition {
             clip_id,
             track_id,
-            original_position: TimePosition::from_seconds(5.0),
-            new_position: TimePosition::from_seconds(10.0),
+            original_position: TimePosition::from_seconds(0.0),
+            new_position: TimePosition::from_seconds(5.0),
         };
 
+        // Apply action1 and record
+        action1.apply(&mut timeline).unwrap();
         history.record_action(action1.clone());
-        let _ = history.undo(); // Move action1 to redo stack
-        assert!(history.can_redo());
 
+        // Undo action1
+        history.undo(&mut timeline).unwrap(); // Pass timeline
+        assert!(history.can_redo());
+        assert!(
+            timeline
+                .get_track(track_id)
+                .unwrap()
+                .get_clip(clip_id)
+                .is_none()
+        ); // State after undo
+
+        // Apply action2 and record
+        // Need to ensure timeline state matches what action2 expects to *start* from.
+        // Since action1 (AddClip) was undone, we need to re-apply it to simulate the state before action2.
+        action1.apply(&mut timeline).unwrap(); // Re-apply AddClip state
+        action2.apply(&mut timeline).unwrap(); // Apply the state change action2 represents (SetPosition)
         history.record_action(action2.clone()); // This should clear the redo stack
+
         assert!(!history.can_redo());
         assert_eq!(history.redo_stack.len(), 0);
         assert_eq!(history.undo_stack.len(), 1); // action2 is on undo stack
+        assert_eq!(
+            timeline
+                .get_track(track_id)
+                .unwrap()
+                .get_clip(clip_id)
+                .unwrap()
+                .position(),
+            TimePosition::from_seconds(5.0)
+        ); // Final state
     }
 
     #[test]
@@ -528,51 +834,77 @@ mod tests {
     #[test]
     fn test_undo_redo_transaction() {
         let mut history = EditHistory::new(None);
+        let mut timeline = create_test_timeline();
+        let track_id = timeline.add_track(TrackKind::Video);
         let clip_id = ClipId::new();
-        let track_id = TrackId::new();
-        let action1 = EditAction::SetClipPosition {
+        let asset_id = AssetId::new();
+        let clip_start = create_dummy_clip(clip_id, asset_id, 0.0, 10.0);
+        // Action 1: Add the clip
+        let action1 = EditAction::AddClip {
+            track_id,
+            clip: clip_start,
+        };
+        // Action 2: Move the clip
+        let action2 = EditAction::SetClipPosition {
             clip_id,
             track_id,
             original_position: TimePosition::zero(),
             new_position: TimePosition::from_seconds(5.0),
         };
-        let action2 = EditAction::SetClipDuration {
-            clip_id,
-            track_id,
-            original_duration: Duration::from_seconds(10.0),
-            new_duration: Duration::from_seconds(8.0),
-            original_source_end: TimePosition::from_seconds(10.0),
-            new_source_end: TimePosition::from_seconds(8.0),
-        };
 
-        // Record and commit transaction
+        // Apply initial state (clip added)
+        action1.apply(&mut timeline).unwrap();
+
+        // Record transaction: AddClip, then SetClipPosition
         history.begin_transaction(None).unwrap();
-        history.record_action(action1.clone());
-        history.record_action(action2.clone());
+        history.record_action(action1.clone()); // Record adding
+        history.record_action(action2.clone()); // Record moving
         history.commit_transaction().unwrap();
 
-        // Undo the transaction
-        let undo_result = history.undo();
-        assert!(undo_result.is_ok());
+        // Apply the second action state (clip moved)
+        action2.apply(&mut timeline).unwrap();
+        assert_eq!(
+            timeline
+                .get_track(track_id)
+                .unwrap()
+                .get_clip(clip_id)
+                .unwrap()
+                .position(),
+            TimePosition::from_seconds(5.0)
+        );
+
+        // --- Test Undo ---
+        assert!(history.undo(&mut timeline).is_ok()); // Pass timeline. Should undo both actions.
         assert!(!history.can_undo());
         assert!(history.can_redo());
+        // Check state: Clip should be gone (undo AddClip was last in group undo)
+        assert!(
+            timeline
+                .get_track(track_id)
+                .unwrap()
+                .get_clip(clip_id)
+                .is_none()
+        );
 
-        if let Ok(HistoryEntry::Group(group)) = undo_result {
-            assert_eq!(group.actions.len(), 2);
-        } else {
-            panic!("Undo failed or returned wrong type");
-        }
-
-        // Redo the transaction
-        let redo_result = history.redo();
-        assert!(redo_result.is_ok());
+        // --- Test Redo ---
+        assert!(history.redo(&mut timeline).is_ok()); // Pass timeline. Should redo both actions.
         assert!(history.can_undo());
         assert!(!history.can_redo());
+        // Check state: Clip should exist and be at the final position (redo SetClipPosition was last in group apply)
+        assert_eq!(
+            timeline
+                .get_track(track_id)
+                .unwrap()
+                .get_clip(clip_id)
+                .unwrap()
+                .position(),
+            TimePosition::from_seconds(5.0)
+        );
 
-        if let Ok(HistoryEntry::Group(group)) = redo_result {
-            assert_eq!(group.actions.len(), 2);
-        } else {
-            panic!("Redo failed or returned wrong type");
+        // Verify the Group structure in the history stack after redo
+        match &history.undo_stack[0] {
+            HistoryEntry::Group(group) => assert_eq!(group.actions.len(), 2),
+            _ => panic!("Redo failed or returned wrong type"),
         }
     }
 
@@ -654,21 +986,19 @@ mod tests {
     #[test]
     fn test_clear_history() {
         let mut history = EditHistory::new(None);
+        let mut timeline = create_test_timeline(); // Need timeline
+        let track_id = timeline.add_track(TrackKind::Video);
         let clip_id = ClipId::new();
-        let track_id = TrackId::new();
-        let action1 = EditAction::SetClipPosition {
-            clip_id,
-            track_id,
-            original_position: TimePosition::zero(),
-            new_position: TimePosition::from_seconds(5.0),
-        };
+        let clip = create_dummy_clip(clip_id, AssetId::new(), 0.0, 5.0);
+        let action1 = EditAction::AddClip { track_id, clip };
 
         // Add an action
+        action1.apply(&mut timeline).unwrap(); // Apply state change
         history.record_action(action1.clone());
         assert!(history.can_undo());
 
         // Undo it to populate redo stack
-        let _ = history.undo();
+        history.undo(&mut timeline).unwrap(); // Pass timeline
         assert!(history.can_redo());
 
         // Start a transaction
@@ -684,4 +1014,66 @@ mod tests {
         assert!(!history.can_undo());
         assert!(!history.can_redo());
     }
+
+    // Helper to create a simple timeline for testing apply/undo
+    fn create_test_timeline() -> Timeline {
+        Timeline::new()
+    }
+
+    // Example of an updated test using EditHistory
+    #[test]
+    fn test_history_apply_undo_single_action() {
+        let mut history = EditHistory::new(None);
+        let mut timeline = create_test_timeline();
+        let track_id = timeline.add_track(TrackKind::Video);
+        let clip_id = ClipId::new();
+        let asset_id = AssetId::new();
+        let clip = create_dummy_clip(clip_id, asset_id, 10.0, 5.0);
+        let action = EditAction::AddClip {
+            track_id,
+            clip: clip.clone(),
+        };
+
+        // Apply action and record
+        action.apply(&mut timeline).unwrap();
+        history.record_action(action);
+        assert!(
+            timeline
+                .get_track(track_id)
+                .unwrap()
+                .get_clip(clip_id)
+                .is_some()
+        );
+        assert!(history.can_undo());
+
+        // Test Undo via history
+        assert!(history.undo(&mut timeline).is_ok()); // Pass timeline
+        assert!(!history.can_undo());
+        assert!(history.can_redo());
+        assert!(
+            timeline
+                .get_track(track_id)
+                .unwrap()
+                .get_clip(clip_id)
+                .is_none()
+        );
+
+        // Test Redo via history
+        assert!(history.redo(&mut timeline).is_ok()); // Pass timeline
+        assert!(history.can_undo());
+        assert!(!history.can_redo());
+        assert!(
+            timeline
+                .get_track(track_id)
+                .unwrap()
+                .get_clip(clip_id)
+                .is_some()
+        );
+    }
+
+    // TODO: Add more apply/undo tests for all actions
+    // TODO: Add tests for transaction apply/undo
+    // TODO: Adapt existing tests to use the new undo/redo signature and check timeline state
+
+    // ... keep existing tests but mark them as needing update or remove if redundant ...
 }

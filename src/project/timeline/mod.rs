@@ -436,6 +436,26 @@ impl Timeline {
         self.tracks.iter().any(|track| track.id() == track_id)
     }
 
+    /// Finds the ID of the track containing the specified clip.
+    ///
+    /// # Arguments
+    ///
+    /// * `clip_id` - The ID of the clip to search for.
+    ///
+    /// # Returns
+    ///
+    /// An `Option<TrackId>` containing the ID of the track if found, otherwise `None`.
+    #[must_use]
+    pub fn find_track_containing_clip(&self, clip_id: crate::project::ClipId) -> Option<TrackId> {
+        self.tracks.iter().find_map(|track| {
+            if track.get_clip(clip_id).is_some() {
+                Some(track.id())
+            } else {
+                None
+            }
+        })
+    }
+
     /// Adds a new track to the timeline.
     ///
     /// # Arguments
