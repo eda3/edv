@@ -1,1 +1,0 @@
-window.SIDEBAR_ITEMS = {"enum":["SubtitleEncoding"],"mod":["editor","error","format","model","parser","style"],"struct":["RenderSettings"]};

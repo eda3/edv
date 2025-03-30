@@ -1,1 +1,0 @@
-window.SIDEBAR_ITEMS = {"constant":["DEFAULT_AUDIO_BITRATE","DEFAULT_AUDIO_CODEC","DEFAULT_SAMPLE_RATE","SUPPORTED_AUDIO_FORMATS"],"fn":["db_to_linear","is_supported_format","linear_to_db","normalize_volume_level"]};

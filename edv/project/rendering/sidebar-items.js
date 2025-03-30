@@ -1,1 +1,0 @@
-window.SIDEBAR_ITEMS = {"enum":["AudioCodec","CompositionError","OutputFormat","RenderError","VideoCodec"],"fn":["render_project","render_project_simple"],"struct":["RenderConfig","RenderPipeline","RenderProgress","RenderResult","TrackCompositor"],"type":["ProgressCallback","Result"]};

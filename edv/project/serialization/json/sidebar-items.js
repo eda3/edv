@@ -1,1 +1,0 @@
-window.SIDEBAR_ITEMS = {"enum":["SerializationError"],"fn":["deserialize_project","serialize_project"],"type":["Result"]};

@@ -1,1 +1,0 @@
-window.SIDEBAR_ITEMS = {"enum":["TimelineError","TrackKind"],"mod":["history","multi_track"],"struct":["Clip","Timeline","Track","TrackId"],"type":["Result"]};
