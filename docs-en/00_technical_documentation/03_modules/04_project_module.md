@@ -337,3 +337,89 @@ pub enum SerializationError { Io(#[from] std::io::Error), Json(#[from] serde_jso
 - Potentially integrate `Project::metadata` with `ProjectMetadata`.
 
 This updated documentation reflects the structure and key components found in the `src/project/` directory as of the last code review.
+
+## Keyframe Animation
+
+The project module now includes keyframe animation capabilities that allow for dynamic property changes over time. This feature enables smooth transitions and effects by interpolating values between key points.
+
+### Overview
+
+Keyframe animation enables the following capabilities:
+- Animate properties such as opacity, scale, position, and rotation
+- Support for different easing functions (linear, ease-in, ease-out, etc.)
+- Property value interpolation between keyframes
+- Full undo/redo support for all keyframe operations
+
+### Key Components
+
+#### Keyframe Point
+
+A `KeyframePoint` represents a single point in time with a specific value and easing function:
+
+```rust
+pub struct KeyframePoint {
+    time: TimePosition,
+    value: f64,
+    easing: EasingFunction,
+}
+```
+
+#### Keyframe Track
+
+A `KeyframeTrack` manages a sequence of keyframes for a single property:
+
+```rust
+pub struct KeyframeTrack {
+    property_name: String,
+    keyframes: Vec<KeyframePoint>,
+}
+```
+
+#### Keyframe Animation
+
+The `KeyframeAnimation` class manages multiple tracks for different properties:
+
+```rust
+pub struct KeyframeAnimation {
+    tracks: HashMap<String, KeyframeTrack>,
+    duration: Duration,
+}
+```
+
+#### Easing Functions
+
+The following easing functions are supported:
+
+- `Linear`: Constant rate of change
+- `EaseIn`: Gradually accelerates
+- `EaseOut`: Gradually decelerates
+- `EaseInOut`: Accelerates then decelerates
+- `Step`: Sudden change at the end of the duration
+
+### Integration with Timeline
+
+Keyframe animations are integrated directly with the timeline system:
+
+- Each `Track` can have an optional `KeyframeAnimation`
+- Animations are applied per-track and affect clip properties
+- Keyframe operations are fully undoable via the history system
+- Property values can be queried at any point in time
+
+### Usage Example
+
+```rust
+// Add keyframes to animate opacity from 0.0 to 1.0 over 10 seconds
+timeline.add_keyframe_with_history(track_id, "opacity", time_pos(0.0), 0.0, EasingFunction::EaseIn)?;
+timeline.add_keyframe_with_history(track_id, "opacity", time_pos(10.0), 1.0, EasingFunction::Linear)?;
+
+// Get the opacity value at a specific time
+let opacity = timeline.get_keyframe_value_at(track_id, "opacity", time_pos(5.0));
+```
+
+### Future Enhancements
+
+Planned improvements to the keyframe animation system include:
+- Support for multi-dimensional properties (like 2D/3D coordinates)
+- Bezier curve easing functions for more precise control
+- Visual keyframe editing tools
+- Animation presets for common effects
