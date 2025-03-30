@@ -171,7 +171,7 @@ impl App {
     ///
     /// `Result<()>` indicating success or failure.
     pub fn execute_command(&self, command: Commands) -> Result<()> {
-        // Create execution context
+        // Create execution context (always create it once here)
         let context = self.create_execution_context()?;
 
         // Match on command type and execute appropriate handler
@@ -214,17 +214,16 @@ impl App {
 
                 // Get the InfoCommand from the registry and execute it
                 if let Ok(info_cmd) = self.command_registry.get("info") {
-                    // Convert arguments
+                    // Build the arguments list
                     let mut args = vec![input];
                     if detailed {
                         args.push("--detailed".to_string());
                     }
 
-                    // Execute the command with prepared arguments
+                    // Execute the command with arguments and the already created context
                     info_cmd.execute(&context, &args)?;
                 } else {
-                    // Fallback to placeholder implementation
-                    self.logger.info("Info command executed successfully");
+                    return Err(super::Error::UnknownCommand("info".to_string()));
                 }
             }
         }

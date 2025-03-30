@@ -1,3 +1,4 @@
+use serde_json;
 /// `FFmpeg` integration for the edv video editor.
 ///
 /// This module provides functionality for detecting, validating, and
@@ -398,29 +399,33 @@ impl FFmpeg {
     ///
     /// Returns an error if the version cannot be parsed.
     fn parse_version_from_output(output: &str) -> Result<Version> {
-        // FFmpeg version output follows a pattern like:
-        // ffmpeg version 4.3.2 Copyright (c) 2000-2021 ...
+        // First line should be "ffmpeg version X.Y.Z"
+        let first_line = output
+            .lines()
+            .next()
+            .ok_or_else(|| Error::OutputParseError("Empty FFmpeg version output".to_string()))?;
 
-        let version_line = output.lines().next().ok_or_else(|| {
-            Error::OutputParseError("Empty output from FFmpeg -version".to_string())
-        })?;
+        // Extract version number
+        let version_str = first_line
+            .split_whitespace()
+            .nth(2) // "ffmpeg" "version" "X.Y.Z"
+            .ok_or_else(|| {
+                Error::OutputParseError(format!("Invalid FFmpeg version line: {first_line}"))
+            })?;
 
-        let version_str = version_line.split_whitespace().nth(2).ok_or_else(|| {
-            Error::OutputParseError(format!("Unexpected FFmpeg version output: {version_line}"))
-        })?;
-
+        // Parse version
         version_str.parse()
     }
 
-    /// Checks if the `FFmpeg` installation is valid and compatible.
+    /// Validates that the `FFmpeg` installation is compatible.
     ///
     /// # Returns
     ///
-    /// A Result indicating if `FFmpeg` is valid and compatible.
+    /// A Result indicating validation success.
     ///
     /// # Errors
     ///
-    /// Returns an error if `FFmpeg` is not valid or compatible.
+    /// Returns an error if the validation fails.
     pub fn validate(&self) -> Result<()> {
         if self.version < Self::MIN_VERSION {
             return Err(Error::UnsupportedVersion {
@@ -428,18 +433,217 @@ impl FFmpeg {
                 required: Self::MIN_VERSION,
             });
         }
+        Ok(())
+    }
 
-        // Try to run a simple command to ensure `FFmpeg` is working
-        let output = Command::new(&self.path).arg("-version").output()?;
+    /// Gets detailed information about a media file.
+    ///
+    /// # Arguments
+    ///
+    /// * `file_path` - Path to the media file
+    ///
+    /// # Returns
+    ///
+    /// A Result containing a `MediaInfo` struct with details about the file.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if:
+    /// * The `FFmpeg` process fails to start or returns a non-zero exit code
+    /// * The output cannot be parsed
+    /// * The file is not a valid media file
+    pub fn get_media_info<P: AsRef<Path>>(&self, file_path: P) -> Result<MediaInfo> {
+        let path = file_path.as_ref();
 
-        if !output.status.success() {
-            return Err(Error::ExecutionError(format!(
-                "FFmpeg validation failed with status: {}",
-                output.status
+        if !path.exists() {
+            return Err(Error::InvalidPath(format!(
+                "File not found: {}",
+                path.display()
             )));
         }
 
-        Ok(())
+        // Use ffprobe to get media information
+        let output = std::process::Command::new("ffprobe")
+            .arg("-v")
+            .arg("quiet")
+            .arg("-print_format")
+            .arg("json")
+            .arg("-show_format")
+            .arg("-show_streams")
+            .arg(path)
+            .output()
+            .map_err(|e| Error::ExecutionError(format!("Failed to execute ffprobe: {e}")))?;
+
+        if !output.status.success() {
+            let stderr = String::from_utf8_lossy(&output.stderr);
+            return Err(Error::ProcessTerminated {
+                exit_code: output.status.code(),
+                message: format!("ffprobe process failed: {stderr}"),
+            });
+        }
+
+        // Parse the JSON output
+        let output_str = String::from_utf8_lossy(&output.stdout);
+        let media_info: MediaInfo = serde_json::from_str(&output_str)
+            .map_err(|e| Error::OutputParseError(format!("Failed to parse ffprobe output: {e}")))?;
+
+        Ok(media_info)
+    }
+}
+
+/// Represents media format information.
+#[derive(Debug, Clone, serde::Deserialize)]
+pub struct FormatInfo {
+    /// The filename.
+    pub filename: String,
+    /// The number of streams.
+    #[serde(default)]
+    pub nb_streams: i32,
+    /// The number of programs.
+    #[serde(default)]
+    pub nb_programs: i32,
+    /// The format name.
+    #[serde(default)]
+    pub format_name: String,
+    /// The format long name.
+    #[serde(rename = "format_long_name", default)]
+    pub format_long_name: String,
+    /// The start time in seconds.
+    #[serde(default)]
+    pub start_time: Option<String>,
+    /// The duration in seconds.
+    #[serde(default)]
+    pub duration: Option<String>,
+    /// The size in bytes.
+    #[serde(default)]
+    pub size: Option<String>,
+    /// The bit rate in bits per second.
+    #[serde(default)]
+    pub bit_rate: Option<String>,
+    /// The probe score (higher is better).
+    #[serde(default)]
+    pub probe_score: i32,
+    /// Additional tags.
+    #[serde(default)]
+    pub tags: Option<std::collections::HashMap<String, String>>,
+}
+
+/// Represents a media stream (video, audio, subtitle, etc.).
+#[derive(Debug, Clone, serde::Deserialize)]
+pub struct StreamInfo {
+    /// The index of the stream.
+    pub index: i32,
+    /// The codec type (video, audio, subtitle, etc.).
+    #[serde(rename = "codec_type")]
+    pub codec_type: String,
+    /// The codec name.
+    #[serde(rename = "codec_name", default)]
+    pub codec_name: String,
+    /// The codec long name.
+    #[serde(rename = "codec_long_name", default)]
+    pub codec_long_name: String,
+    /// The width (for video streams).
+    #[serde(default)]
+    pub width: Option<i32>,
+    /// The height (for video streams).
+    #[serde(default)]
+    pub height: Option<i32>,
+    /// The pixel format (for video streams).
+    #[serde(rename = "pix_fmt", default)]
+    pub pixel_format: Option<String>,
+    /// The frame rate (for video streams).
+    #[serde(rename = "r_frame_rate", default)]
+    pub frame_rate: Option<String>,
+    /// The sample rate (for audio streams).
+    #[serde(rename = "sample_rate", default)]
+    pub sample_rate: Option<String>,
+    /// The number of channels (for audio streams).
+    #[serde(default)]
+    pub channels: Option<i32>,
+    /// The channel layout (for audio streams).
+    #[serde(rename = "channel_layout", default)]
+    pub channel_layout: Option<String>,
+    /// The bit rate (for audio/video streams).
+    #[serde(default)]
+    pub bit_rate: Option<String>,
+    /// Additional tags.
+    #[serde(default)]
+    pub tags: Option<std::collections::HashMap<String, String>>,
+}
+
+/// Represents comprehensive media information.
+#[derive(Debug, Clone, serde::Deserialize)]
+pub struct MediaInfo {
+    /// Information about the format (container).
+    pub format: FormatInfo,
+    /// Information about the streams (video, audio, subtitle, etc.).
+    pub streams: Vec<StreamInfo>,
+}
+
+impl MediaInfo {
+    /// Gets the video streams.
+    ///
+    /// # Returns
+    ///
+    /// A vector of references to video streams.
+    #[must_use]
+    pub fn video_streams(&self) -> Vec<&StreamInfo> {
+        self.streams
+            .iter()
+            .filter(|stream| stream.codec_type == "video")
+            .collect()
+    }
+
+    /// Gets the audio streams.
+    ///
+    /// # Returns
+    ///
+    /// A vector of references to audio streams.
+    #[must_use]
+    pub fn audio_streams(&self) -> Vec<&StreamInfo> {
+        self.streams
+            .iter()
+            .filter(|stream| stream.codec_type == "audio")
+            .collect()
+    }
+
+    /// Gets the subtitle streams.
+    ///
+    /// # Returns
+    ///
+    /// A vector of references to subtitle streams.
+    #[must_use]
+    pub fn subtitle_streams(&self) -> Vec<&StreamInfo> {
+        self.streams
+            .iter()
+            .filter(|stream| stream.codec_type == "subtitle")
+            .collect()
+    }
+
+    /// Gets the duration in seconds.
+    ///
+    /// # Returns
+    ///
+    /// The duration in seconds, or None if not available.
+    #[must_use]
+    pub fn duration_seconds(&self) -> Option<f64> {
+        self.format
+            .duration
+            .as_ref()
+            .and_then(|s| s.parse::<f64>().ok())
+    }
+
+    /// Gets the bit rate in bits per second.
+    ///
+    /// # Returns
+    ///
+    /// The bit rate in bits per second, or None if not available.
+    #[must_use]
+    pub fn bit_rate(&self) -> Option<u64> {
+        self.format
+            .bit_rate
+            .as_ref()
+            .and_then(|s| s.parse::<u64>().ok())
     }
 }
 

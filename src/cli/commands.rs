@@ -1,3 +1,7 @@
+use crate::cli::output::{OutputFormatter, ProgressReporter};
+use crate::ffmpeg::{FFmpeg, MediaInfo};
+use chrono::{DateTime, Utc};
+use mime_guess::MimeGuess;
 /// Command definitions and registry for the CLI application.
 ///
 /// This module defines the command trait that all edv commands must implement,
@@ -6,7 +10,9 @@
 use std::collections::HashMap;
 use std::fmt::Debug;
 use std::fs;
+use std::io::{self, Write};
 use std::path::Path;
+use thiserror::Error;
 
 use crate::core::Context;
 
@@ -239,21 +245,30 @@ impl Command for InfoCommand {
 
         if let Ok(metadata) = fs::metadata(path) {
             let size_bytes = metadata.len();
-            let size_kb = size_bytes as f64 / 1024.0;
-            let size_mb = size_kb / 1024.0;
+            let size_formatted = format_file_size(size_bytes);
 
             context.logger.info(&format!("File exists: Yes"));
-            context.logger.info(&format!(
-                "File size: {} bytes ({:.2} KB, {:.2} MB)",
-                size_bytes, size_kb, size_mb
-            ));
+            context
+                .logger
+                .info(&format!("Size: {} ({} bytes)", size_formatted, size_bytes));
+
+            // Get and format modification time
+            if let Ok(modified) = metadata.modified() {
+                let modified: DateTime<Utc> = modified.into();
+                context.logger.info(&format!(
+                    "Modified: {}",
+                    modified.format("%Y-%m-%d %H:%M:%S UTC")
+                ));
+            }
 
             // Get MIME type (if can be guessed)
-            if let Some(file_type) = mime_guess::from_path(path).first_raw() {
-                context
-                    .logger
-                    .info(&format!("MIME type (guessed): {}", file_type));
-            }
+            let mime = MimeGuess::from_path(path).first_or_octet_stream();
+            context.logger.info(&format!("Type: {}", mime));
+
+            // Check if it's a media file
+            let is_media_file = mime.type_().as_str().starts_with("video")
+                || mime.type_().as_str().starts_with("audio")
+                || mime.type_().as_str().starts_with("image");
 
             // Show if it's a directory
             if metadata.is_dir() {
@@ -262,22 +277,38 @@ impl Command for InfoCommand {
                 context.logger.info("Type: Regular file");
             }
 
-            // Show if detailed mode is requested
+            // Show detailed information if requested
             let detailed = args.len() > 1 && (args[1] == "--detailed" || args[1] == "-d");
-            if detailed {
-                if let Ok(last_modified) = metadata.modified() {
-                    let last_modified_str = chrono::DateTime::<chrono::Local>::from(last_modified)
-                        .format("%Y-%m-%d %H:%M:%S")
-                        .to_string();
-                    context
-                        .logger
-                        .info(&format!("Last modified: {}", last_modified_str));
-                }
 
-                // In a real implementation, we would use FFmpeg here to get media-specific details
-                context
-                    .logger
-                    .info("Note: Full media information requires FFmpeg integration (coming soon)");
+            // If it's a media file and FFmpeg is available, get media info
+            if is_media_file {
+                match FFmpeg::detect() {
+                    Ok(ffmpeg) => {
+                        context.logger.info("Media Information:");
+
+                        match ffmpeg.get_media_info(path) {
+                            Ok(media_info) => {
+                                display_media_info(&media_info, context, detailed)?;
+                            }
+                            Err(e) => {
+                                context
+                                    .logger
+                                    .warning(&format!("Could not retrieve media info: {e}"));
+                            }
+                        }
+                    }
+                    Err(e) => {
+                        context
+                            .logger
+                            .warning(&format!("FFmpeg not available: {e}"));
+                        context
+                            .logger
+                            .warning("Media information cannot be displayed without FFmpeg.");
+                    }
+                }
+            } else if detailed {
+                context.logger
+                    .info("Note: This is not a media file, so no media-specific information is available.");
             }
         } else {
             return Err(Error::InvalidPath(format!(
@@ -290,6 +321,268 @@ impl Command for InfoCommand {
         Ok(())
     }
 }
+
+/// Displays media information.
+///
+/// # Arguments
+///
+/// * `media_info` - The media information to display
+/// * `context` - The execution context
+/// * `detailed` - Whether to display detailed information
+///
+/// # Returns
+///
+/// A Result indicating success or failure
+///
+/// # Errors
+///
+/// Returns an error if the operation fails
+fn display_media_info(media_info: &MediaInfo, context: &Context, detailed: bool) -> Result<()> {
+    // Display format info
+    let format = &media_info.format;
+    context
+        .logger
+        .info(&format!("  Format: {}", format.format_long_name));
+
+    // Display duration
+    if let Some(duration) = media_info.duration_seconds() {
+        let duration_fmt = format_duration(duration);
+        context
+            .logger
+            .info(&format!("  Duration: {}", duration_fmt));
+    }
+
+    // Display bit rate
+    if let Some(bit_rate) = media_info.bit_rate() {
+        context
+            .logger
+            .info(&format!("  Bit Rate: {} kb/s", bit_rate / 1000));
+    }
+
+    // Display video streams
+    let video_streams = media_info.video_streams();
+    if !video_streams.is_empty() {
+        context
+            .logger
+            .info(&format!("  Video Streams: {}", video_streams.len()));
+
+        for (i, stream) in video_streams.iter().enumerate() {
+            context
+                .logger
+                .info(&format!("    Stream #{}: {}", i, stream.codec_long_name));
+
+            if let (Some(width), Some(height)) = (stream.width, stream.height) {
+                context
+                    .logger
+                    .info(&format!("      Resolution: {}x{}", width, height));
+            }
+
+            if let Some(frame_rate) = &stream.frame_rate {
+                if let Ok((num, den)) = parse_frame_rate(frame_rate) {
+                    let fps = num as f64 / den as f64;
+                    context
+                        .logger
+                        .info(&format!("      Frame Rate: {:.2} fps", fps));
+                }
+            }
+
+            if detailed {
+                if let Some(pixel_format) = &stream.pixel_format {
+                    context
+                        .logger
+                        .info(&format!("      Pixel Format: {}", pixel_format));
+                }
+
+                if let Some(bit_rate) = &stream.bit_rate {
+                    if let Ok(br) = bit_rate.parse::<u64>() {
+                        context
+                            .logger
+                            .info(&format!("      Bit Rate: {} kb/s", br / 1000));
+                    }
+                }
+
+                // Display tags if available
+                if let Some(tags) = &stream.tags {
+                    context.logger.info("      Tags:");
+                    for (key, value) in tags {
+                        context.logger.info(&format!("        {}: {}", key, value));
+                    }
+                }
+            }
+        }
+    }
+
+    // Display audio streams
+    let audio_streams = media_info.audio_streams();
+    if !audio_streams.is_empty() {
+        context
+            .logger
+            .info(&format!("  Audio Streams: {}", audio_streams.len()));
+
+        for (i, stream) in audio_streams.iter().enumerate() {
+            context
+                .logger
+                .info(&format!("    Stream #{}: {}", i, stream.codec_long_name));
+
+            if let Some(sample_rate) = &stream.sample_rate {
+                context
+                    .logger
+                    .info(&format!("      Sample Rate: {} Hz", sample_rate));
+            }
+
+            if let Some(channels) = stream.channels {
+                context
+                    .logger
+                    .info(&format!("      Channels: {}", channels));
+
+                if let Some(channel_layout) = &stream.channel_layout {
+                    context
+                        .logger
+                        .info(&format!("      Channel Layout: {}", channel_layout));
+                }
+            }
+
+            if detailed {
+                if let Some(bit_rate) = &stream.bit_rate {
+                    if let Ok(br) = bit_rate.parse::<u64>() {
+                        context
+                            .logger
+                            .info(&format!("      Bit Rate: {} kb/s", br / 1000));
+                    }
+                }
+
+                // Display tags if available
+                if let Some(tags) = &stream.tags {
+                    context.logger.info("      Tags:");
+                    for (key, value) in tags {
+                        context.logger.info(&format!("        {}: {}", key, value));
+                    }
+                }
+            }
+        }
+    }
+
+    // Display subtitle streams if detailed mode
+    if detailed {
+        let subtitle_streams = media_info.subtitle_streams();
+        if !subtitle_streams.is_empty() {
+            context
+                .logger
+                .info(&format!("  Subtitle Streams: {}", subtitle_streams.len()));
+
+            for (i, stream) in subtitle_streams.iter().enumerate() {
+                context
+                    .logger
+                    .info(&format!("    Stream #{}: {}", i, stream.codec_long_name));
+
+                if let Some(tags) = &stream.tags {
+                    context.logger.info("      Tags:");
+                    for (key, value) in tags {
+                        context.logger.info(&format!("        {}: {}", key, value));
+                    }
+                }
+            }
+        }
+
+        // Display format tags if available
+        if let Some(tags) = &format.tags {
+            context.logger.info("  Format Tags:");
+            for (key, value) in tags {
+                context.logger.info(&format!("    {}: {}", key, value));
+            }
+        }
+    }
+
+    Ok(())
+}
+
+/// Formats a file size into a human-readable string.
+///
+/// # Arguments
+///
+/// * `size` - The file size in bytes
+///
+/// # Returns
+///
+/// A human-readable string representing the file size
+fn format_file_size(size: u64) -> String {
+    const KB: u64 = 1024;
+    const MB: u64 = KB * 1024;
+    const GB: u64 = MB * 1024;
+
+    if size >= GB {
+        format!("{:.2} GB", size as f64 / GB as f64)
+    } else if size >= MB {
+        format!("{:.2} MB", size as f64 / MB as f64)
+    } else if size >= KB {
+        format!("{:.2} KB", size as f64 / KB as f64)
+    } else {
+        format!("{} bytes", size)
+    }
+}
+
+/// Formats a duration in seconds into a human-readable string.
+///
+/// # Arguments
+///
+/// * `seconds` - The duration in seconds
+///
+/// # Returns
+///
+/// A human-readable string representing the duration
+fn format_duration(seconds: f64) -> String {
+    let hours = (seconds / 3600.0).floor() as u64;
+    let minutes = ((seconds % 3600.0) / 60.0).floor() as u64;
+    let secs = (seconds % 60.0).floor() as u64;
+    let millis = ((seconds % 1.0) * 1000.0).round() as u64;
+
+    if hours > 0 {
+        format!("{}:{:02}:{:02}.{:03}", hours, minutes, secs, millis)
+    } else {
+        format!("{}:{:02}.{:03}", minutes, secs, millis)
+    }
+}
+
+/// Parses a frame rate string in the format "num/den".
+///
+/// # Arguments
+///
+/// * `frame_rate` - The frame rate string
+///
+/// # Returns
+///
+/// A Result containing a tuple of (numerator, denominator)
+///
+/// # Errors
+///
+/// Returns an error if the string cannot be parsed
+fn parse_frame_rate(frame_rate: &str) -> Result<(u64, u64)> {
+    let parts: Vec<&str> = frame_rate.split('/').collect();
+    if parts.len() != 2 {
+        return Err(Error::InvalidArgument(format!(
+            "Invalid frame rate format: {frame_rate}"
+        )));
+    }
+
+    let num = parts[0]
+        .parse::<u64>()
+        .map_err(|e| Error::InvalidArgument(format!("Invalid frame rate numerator: {e}")))?;
+
+    let den = parts[1]
+        .parse::<u64>()
+        .map_err(|e| Error::InvalidArgument(format!("Invalid frame rate denominator: {e}")))?;
+
+    if den == 0 {
+        return Err(Error::InvalidArgument(
+            "Frame rate denominator cannot be zero".to_string(),
+        ));
+    }
+
+    Ok((num, den))
+}
+
+/// Command for trimming a video file.
+// ... existing code ...
 
 #[cfg(test)]
 mod tests {
