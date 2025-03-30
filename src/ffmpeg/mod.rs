@@ -206,17 +206,20 @@ impl FFmpeg {
         &self.version
     }
 
-    /// Detects the `FFmpeg` installation.
+    /// Detects any installed FFmpeg executable.
     ///
-    /// Searches for `FFmpeg` in the system PATH and validates it.
+    /// This function performs various checks to locate an FFmpeg installation:
+    /// 1. Checks if `$FFMPEG_PATH` environment variable is set and points to a valid executable
+    /// 2. Looks for `ffmpeg` in the system PATH
+    /// 3. Checks common installation locations for specific operating systems
     ///
     /// # Returns
     ///
-    /// A Result containing the `FFmpeg` installation if found and valid.
+    /// `Result<FFmpeg>` containing the FFmpeg instance if located.
     ///
     /// # Errors
     ///
-    /// Returns an error if `FFmpeg` is not found or not compatible.
+    /// Returns an error if FFmpeg cannot be found or is not executable.
     pub fn detect() -> Result<Self> {
         // First try to find in PATH
         if let Ok(ffmpeg) = Self::detect_in_path() {
@@ -355,6 +358,15 @@ impl FFmpeg {
         locations
     }
 
+    /// Creates a new FFmpeg command with this FFmpeg instance.
+    ///
+    /// # Returns
+    ///
+    /// A new FFmpegCommand instance ready to be configured.
+    pub fn command(&self) -> crate::ffmpeg::command::FFmpegCommand {
+        crate::ffmpeg::command::FFmpegCommand::new(self)
+    }
+
     /// Parses the `FFmpeg` version from command output.
     ///
     /// # Arguments
@@ -417,26 +429,7 @@ impl FFmpeg {
         version_str.parse()
     }
 
-    /// Validates that the `FFmpeg` installation is compatible.
-    ///
-    /// # Returns
-    ///
-    /// A Result indicating validation success.
-    ///
-    /// # Errors
-    ///
-    /// Returns an error if the validation fails.
-    pub fn validate(&self) -> Result<()> {
-        if self.version < Self::MIN_VERSION {
-            return Err(Error::UnsupportedVersion {
-                actual: self.version.clone(),
-                required: Self::MIN_VERSION,
-            });
-        }
-        Ok(())
-    }
-
-    /// Gets detailed information about a media file.
+    /// Gets information about a media file.
     ///
     /// # Arguments
     ///
@@ -444,14 +437,11 @@ impl FFmpeg {
     ///
     /// # Returns
     ///
-    /// A Result containing a `MediaInfo` struct with details about the file.
+    /// `Result<MediaInfo>` containing information about the media file.
     ///
     /// # Errors
     ///
-    /// Returns an error if:
-    /// * The `FFmpeg` process fails to start or returns a non-zero exit code
-    /// * The output cannot be parsed
-    /// * The file is not a valid media file
+    /// Returns an error if the file cannot be analyzed.
     pub fn get_media_info<P: AsRef<Path>>(&self, file_path: P) -> Result<MediaInfo> {
         let path = file_path.as_ref();
 
@@ -488,6 +478,25 @@ impl FFmpeg {
             .map_err(|e| Error::OutputParseError(format!("Failed to parse ffprobe output: {e}")))?;
 
         Ok(media_info)
+    }
+
+    /// Validates that the `FFmpeg` installation is compatible.
+    ///
+    /// # Returns
+    ///
+    /// A Result indicating validation success.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the validation fails.
+    pub fn validate(&self) -> Result<()> {
+        if self.version < Self::MIN_VERSION {
+            return Err(Error::UnsupportedVersion {
+                actual: self.version.clone(),
+                required: Self::MIN_VERSION,
+            });
+        }
+        Ok(())
     }
 }
 

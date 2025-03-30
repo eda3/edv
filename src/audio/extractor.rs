@@ -206,7 +206,7 @@ where
 
     // Finalize command
     cmd.output_options(&output_opts)
-        .output(output)
+        .set_output(output)
         .overwrite(true);
 
     cmd.execute().map_err(Error::from)
@@ -324,7 +324,7 @@ where
     cmd.input(input)
         .filter_complex(&filter_complex)
         .output_options(&output_options)
-        .output(output)
+        .set_output(output)
         .overwrite(true);
 
     cmd.execute().map_err(Error::from)

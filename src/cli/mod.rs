@@ -66,6 +66,10 @@ pub enum Error {
     /// Render error
     #[error("Render error: {0}")]
     RenderError(String),
+
+    /// FFmpeg related error
+    #[error("FFmpeg error: {0}")]
+    FFmpegError(String),
 }
 
 /// Result type for CLI operations

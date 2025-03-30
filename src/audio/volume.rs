@@ -123,7 +123,7 @@ where
 
     let mut cmd = FFmpegCommand::new(ffmpeg);
     cmd.input(input)
-        .output(output)
+        .set_output(output)
         .output_options(["-filter:a", &volume_expr, "-c:v", "copy"])
         .overwrite(true);
 
@@ -199,7 +199,7 @@ where
 
     let mut cmd = FFmpegCommand::new(ffmpeg);
     cmd.input(input)
-        .output(output)
+        .set_output(output)
         .output_options(["-filter:a", &volume_filter, "-c:v", "copy"])
         .overwrite(true);
 
@@ -245,7 +245,7 @@ where
 
     let mut cmd = FFmpegCommand::new(ffmpeg);
     cmd.input(input.as_ref())
-        .output(output)
+        .set_output(output)
         .output_options([
             "-filter:a",
             &format!("loudnorm=I={target_level}:TP=-1.5:LRA=11:print_format=json"),

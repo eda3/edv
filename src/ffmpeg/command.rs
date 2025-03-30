@@ -116,7 +116,7 @@ impl<'a> FFmpegCommand<'a> {
     /// # Returns
     ///
     /// Self for method chaining
-    pub fn output<P: AsRef<Path>>(&mut self, output: P) -> &mut Self {
+    pub fn set_output<P: AsRef<Path>>(&mut self, output: P) -> &mut Self {
         self.output = Some(output.as_ref().to_path_buf());
         self
     }
@@ -132,6 +132,60 @@ impl<'a> FFmpegCommand<'a> {
     /// Self for method chaining
     pub fn overwrite(&mut self, overwrite: bool) -> &mut Self {
         self.overwrite = overwrite;
+        self
+    }
+
+    /// Adds an input option to be applied before an input file.
+    ///
+    /// # Arguments
+    ///
+    /// * `option` - The option name (e.g., "-ss")
+    /// * `value` - The option value (e.g., "10.5")
+    ///
+    /// # Returns
+    ///
+    /// Self for method chaining
+    pub fn add_input_option<S: AsRef<str>, T: AsRef<str>>(
+        &mut self,
+        option: S,
+        value: T,
+    ) -> &mut Self {
+        self.input_options.push(option.as_ref().to_string());
+        self.input_options.push(value.as_ref().to_string());
+        self
+    }
+
+    /// Adds an output option to be applied before the output file.
+    ///
+    /// # Arguments
+    ///
+    /// * `option` - The option name (e.g., "-c")
+    /// * `value` - The option value (e.g., "copy")
+    ///
+    /// # Returns
+    ///
+    /// Self for method chaining
+    pub fn add_output_option<S: AsRef<str>, T: AsRef<str>>(
+        &mut self,
+        option: S,
+        value: T,
+    ) -> &mut Self {
+        self.output_options.push(option.as_ref().to_string());
+        self.output_options.push(value.as_ref().to_string());
+        self
+    }
+
+    /// Adds an input file to the command.
+    ///
+    /// # Arguments
+    ///
+    /// * `input` - The input file path
+    ///
+    /// # Returns
+    ///
+    /// Self for method chaining
+    pub fn add_input<P: AsRef<Path>>(&mut self, input: P) -> &mut Self {
+        self.inputs.push(input.as_ref().to_path_buf());
         self
     }
 
@@ -207,6 +261,108 @@ impl<'a> FFmpegCommand<'a> {
             .stdout(Stdio::piped())
             .output()
             .map_err(Error::IoError)?;
+
+        // Check for success
+        if !output.status.success() {
+            let stderr = String::from_utf8_lossy(&output.stderr);
+            return Err(Error::ProcessTerminated {
+                exit_code: output.status.code(),
+                message: format!("FFmpeg process failed: {stderr}"),
+            });
+        }
+
+        Ok(())
+    }
+
+    /// Executes the FFmpeg command with progress callback.
+    ///
+    /// # Arguments
+    ///
+    /// * `progress_callback` - Callback function that receives FFmpeg progress output
+    ///
+    /// # Returns
+    ///
+    /// Result indicating success or failure
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the FFmpeg process fails
+    pub fn execute_with_progress<F>(&self, mut progress_callback: F) -> Result<()>
+    where
+        F: FnMut(&str),
+    {
+        // Check that we have inputs and an output
+        if self.inputs.is_empty() {
+            return Err(Error::MissingArgument(
+                "No input files specified".to_string(),
+            ));
+        }
+
+        if self.output.is_none() {
+            return Err(Error::MissingArgument(
+                "No output file specified".to_string(),
+            ));
+        }
+
+        // Build the command
+        let mut cmd = Command::new(self.ffmpeg.path());
+
+        // Add global options
+        if self.overwrite {
+            cmd.arg("-y");
+        }
+
+        // Add progress option for stderr output
+        cmd.arg("-progress").arg("pipe:2");
+
+        // Add input options and inputs
+        for i in 0..self.inputs.len() {
+            // Add input options for this input
+            if i == 0 && !self.input_options.is_empty() {
+                for option in &self.input_options {
+                    cmd.arg(option);
+                }
+            }
+
+            // Add the input
+            cmd.arg("-i").arg(&self.inputs[i]);
+        }
+
+        // Add filter complex if specified
+        if let Some(filter) = &self.filter_complex {
+            cmd.arg("-filter_complex").arg(filter);
+        }
+
+        // Add output options
+        for option in &self.output_options {
+            cmd.arg(option);
+        }
+
+        // Add output
+        cmd.arg(self.output.as_ref().unwrap());
+
+        // Execute the command
+        let mut child = cmd
+            .stderr(Stdio::piped())
+            .stdout(Stdio::piped())
+            .spawn()
+            .map_err(Error::IoError)?;
+
+        // Read progress updates from stderr
+        if let Some(stderr) = child.stderr.take() {
+            use std::io::{BufRead, BufReader};
+            let reader = BufReader::new(stderr);
+
+            // Process each line as it becomes available
+            for line in reader.lines() {
+                if let Ok(line) = line {
+                    progress_callback(&line);
+                }
+            }
+        }
+
+        // Wait for the process to finish
+        let output = child.wait_with_output().map_err(Error::IoError)?;
 
         // Check for success
         if !output.status.success() {

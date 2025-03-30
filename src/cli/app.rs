@@ -145,8 +145,11 @@ impl App {
     ///
     /// `Result<()>` indicating success or failure.
     fn register_commands(&mut self) -> Result<()> {
+        // Register trim command
+        self.command_registry
+            .register(Box::new(commands::TrimCommand::new()))?;
+
         // TODO: Uncomment these when other commands are implemented
-        // self.command_registry.register(Box::new(commands::TrimCommand::new()))?;
         // self.command_registry.register(Box::new(commands::ConcatCommand::new()))?;
         // self.command_registry.register(Box::new(commands::ConvertCommand::new()))?;
 
@@ -188,9 +191,31 @@ impl App {
                     input, output, start, end, recompress
                 ));
 
-                // Command implementation will be added later
-                // This is a placeholder to avoid unused variable warnings
-                self.logger.info("Trim command executed successfully");
+                // Get the TrimCommand from the registry and execute it
+                if let Ok(trim_cmd) = self.command_registry.get("trim") {
+                    // Build the arguments list
+                    let mut args = vec![input, output];
+
+                    // Add optional arguments
+                    if let Some(start_time) = start {
+                        args.push("--start".to_string());
+                        args.push(start_time);
+                    }
+
+                    if let Some(end_time) = end {
+                        args.push("--end".to_string());
+                        args.push(end_time);
+                    }
+
+                    if recompress {
+                        args.push("--recompress".to_string());
+                    }
+
+                    // Execute the command with arguments and the already created context
+                    trim_cmd.execute(&context, &args)?;
+                } else {
+                    return Err(super::Error::UnknownCommand("trim".to_string()));
+                }
             }
             Commands::Concat {
                 input,

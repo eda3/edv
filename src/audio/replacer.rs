@@ -290,7 +290,7 @@ where
             "-ar",
             &options.sample_rate.to_string(), // Use specified sample rate
         ])
-        .output(output)
+        .set_output(output)
         .overwrite(true);
 
     cmd.execute().map_err(Error::from)
@@ -341,7 +341,7 @@ where
             "-ar",
             &options.sample_rate.to_string(), // Use specified sample rate
         ])
-        .output(output)
+        .set_output(output)
         .overwrite(true);
 
     cmd.execute().map_err(Error::from)
@@ -484,7 +484,7 @@ where
             "-ar",
             &options.sample_rate.to_string(), // Use specified sample rate
         ])
-        .output(output)
+        .set_output(output)
         .overwrite(true);
 
     cmd.execute().map_err(Error::from)

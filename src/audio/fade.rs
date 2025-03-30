@@ -161,7 +161,7 @@ where
         cmd.output_options(&video_options);
     }
 
-    cmd.output(output).overwrite(true);
+    cmd.set_output(output).overwrite(true);
 
     cmd.execute().map_err(Error::from)
 }
@@ -232,7 +232,7 @@ where
         cmd.output_options(&video_options);
     }
 
-    cmd.output(output).overwrite(true);
+    cmd.set_output(output).overwrite(true);
 
     cmd.execute().map_err(Error::from)
 }
@@ -312,7 +312,7 @@ where
         cmd.output_options(&video_options);
     }
 
-    cmd.output(output).overwrite(true);
+    cmd.set_output(output).overwrite(true);
 
     cmd.execute().map_err(Error::from)
 }
@@ -436,7 +436,7 @@ where
         cmd.output_options(&video_options);
     }
 
-    cmd.output(output).overwrite(true);
+    cmd.set_output(output).overwrite(true);
 
     cmd.execute().map_err(Error::from)
 }

@@ -582,7 +582,272 @@ fn parse_frame_rate(frame_rate: &str) -> Result<(u64, u64)> {
 }
 
 /// Command for trimming a video file.
-// ... existing code ...
+///
+/// This command trims a video file to a specified start and end time,
+/// creating a new file with the trimmed content. It supports both
+/// stream copy (fast) and re-encoding (higher quality for precise cuts).
+#[derive(Debug)]
+pub struct TrimCommand;
+
+impl TrimCommand {
+    /// Creates a new trim command.
+    #[must_use]
+    pub fn new() -> Self {
+        Self
+    }
+
+    /// Checks if the given file exists and is readable.
+    ///
+    /// # Arguments
+    ///
+    /// * `path` - Path to the file to check
+    ///
+    /// # Returns
+    ///
+    /// `Result<()>` indicating success or failure.
+    fn check_input_file(&self, path: &str) -> Result<()> {
+        let path = Path::new(path);
+        if !path.exists() {
+            return Err(Error::InvalidArgument(format!(
+                "Input file does not exist: {path:?}"
+            )));
+        }
+        if !path.is_file() {
+            return Err(Error::InvalidArgument(format!(
+                "Not a regular file: {path:?}"
+            )));
+        }
+        Ok(())
+    }
+
+    /// Extracts and validates time position arguments.
+    ///
+    /// # Arguments
+    ///
+    /// * `start_str` - Optional start time string
+    /// * `end_str` - Optional end time string
+    /// * `duration` - Media duration for validation
+    ///
+    /// # Returns
+    ///
+    /// Result with tuple of (start_pos, end_pos) as TimePosition objects
+    fn extract_time_positions(
+        &self,
+        start_str: Option<&str>,
+        end_str: Option<&str>,
+        duration: f64,
+    ) -> Result<(
+        crate::utility::time::TimePosition,
+        crate::utility::time::TimePosition,
+    )> {
+        use crate::utility::time::TimePosition;
+
+        // Parse start time (default to 0)
+        let start_pos = if let Some(start) = start_str {
+            TimePosition::parse(start)
+                .map_err(|e| Error::InvalidArgument(format!("Invalid start time: {e}")))?
+        } else {
+            TimePosition::zero()
+        };
+
+        // Parse end time (default to duration)
+        let end_pos = if let Some(end) = end_str {
+            TimePosition::parse(end)
+                .map_err(|e| Error::InvalidArgument(format!("Invalid end time: {e}")))?
+        } else {
+            TimePosition::from_seconds(duration)
+        };
+
+        // Validate time positions
+        if start_pos.as_seconds() >= end_pos.as_seconds() {
+            return Err(Error::InvalidArgument(
+                "Start time must be less than end time".to_string(),
+            ));
+        }
+
+        if end_pos.as_seconds() > duration {
+            return Err(Error::InvalidArgument(format!(
+                "End time ({}) exceeds media duration ({})",
+                end_pos,
+                format_duration(duration)
+            )));
+        }
+
+        Ok((start_pos, end_pos))
+    }
+}
+
+impl Command for TrimCommand {
+    fn name(&self) -> &str {
+        "trim"
+    }
+
+    fn description(&self) -> &str {
+        "Trims a video file to specified start and end times"
+    }
+
+    fn usage(&self) -> &str {
+        "trim --input <input_file> --output <output_file> [--start <time>] [--end <time>] [--recompress]"
+    }
+
+    fn execute(&self, context: &Context, args: &[String]) -> Result<()> {
+        if args.len() < 2 {
+            return Err(Error::InvalidArgument(
+                "Missing required arguments. Use --help for usage information.".to_string(),
+            ));
+        }
+
+        let input_file = &args[0];
+        let output_file = &args[1];
+
+        // Parse remaining arguments
+        let mut start_time = None;
+        let mut end_time = None;
+        let mut recompress = false;
+
+        let mut i = 2;
+        while i < args.len() {
+            match args[i].as_str() {
+                "--start" => {
+                    if i + 1 < args.len() {
+                        start_time = Some(args[i + 1].as_str());
+                        i += 2;
+                    } else {
+                        return Err(Error::InvalidArgument(
+                            "--start requires a value".to_string(),
+                        ));
+                    }
+                }
+                "--end" => {
+                    if i + 1 < args.len() {
+                        end_time = Some(args[i + 1].as_str());
+                        i += 2;
+                    } else {
+                        return Err(Error::InvalidArgument("--end requires a value".to_string()));
+                    }
+                }
+                "--recompress" => {
+                    recompress = true;
+                    i += 1;
+                }
+                _ => {
+                    return Err(Error::InvalidArgument(format!(
+                        "Unknown argument: {}",
+                        args[i]
+                    )));
+                }
+            }
+        }
+
+        // Validate input file
+        self.check_input_file(input_file)?;
+
+        // Initialize FFmpeg
+        let ffmpeg = FFmpeg::detect().map_err(|e| Error::FFmpegError(e.to_string()))?;
+
+        // Get media information to validate times
+        context
+            .logger
+            .info(&format!("Analyzing media file: {input_file}"));
+        let media_info = ffmpeg
+            .get_media_info(input_file)
+            .map_err(|e| Error::FFmpegError(format!("Failed to get media info: {e}")))?;
+
+        // Get duration from format section
+        let duration_str = media_info.format.duration.as_ref().ok_or_else(|| {
+            Error::CommandExecution("Media file has no duration information".to_string())
+        })?;
+
+        let duration = duration_str
+            .parse::<f64>()
+            .map_err(|_| Error::CommandExecution("Invalid duration in media info".to_string()))?;
+
+        // Extract and validate time positions
+        let (start_pos, end_pos) = self.extract_time_positions(start_time, end_time, duration)?;
+
+        // Build FFmpeg command for trimming
+        context.logger.info(&format!(
+            "Trimming from {} to {} (duration: {})",
+            start_pos,
+            end_pos,
+            format_duration(end_pos.as_seconds() - start_pos.as_seconds())
+        ));
+
+        let mut ffmpeg_cmd = ffmpeg.command();
+
+        // Add input options
+        ffmpeg_cmd.add_input_option("-ss", &start_pos.to_string());
+
+        // Add input file
+        ffmpeg_cmd.add_input(input_file);
+
+        // Add duration (more precise than end time)
+        let trim_duration = end_pos.as_seconds() - start_pos.as_seconds();
+        ffmpeg_cmd.add_output_option("-t", &trim_duration.to_string());
+
+        // Configure output options
+        if !recompress {
+            // Use stream copy for faster processing
+            ffmpeg_cmd.add_output_option("-c", "copy");
+        }
+
+        // Set output file
+        ffmpeg_cmd.set_output(output_file);
+
+        // Create progress reporter with total duration in seconds
+        let mut progress = ProgressReporter::new(trim_duration as usize, "Trimming video", true);
+
+        // Execute FFmpeg command
+        ffmpeg_cmd
+            .execute_with_progress(|progress_line| {
+                // Process progress updates from FFmpeg
+                if let Some(time_pos) = extract_time_from_progress(progress_line) {
+                    progress.update(time_pos as usize);
+                }
+            })
+            .map_err(|e| Error::FFmpegError(format!("FFmpeg execution failed: {e}")))?;
+
+        progress.complete();
+        context
+            .logger
+            .info(&format!("Trimmed video saved to: {output_file}"));
+
+        Ok(())
+    }
+}
+
+/// Extracts time position from FFmpeg progress output.
+///
+/// # Arguments
+///
+/// * `line` - Progress line from FFmpeg
+///
+/// # Returns
+///
+/// Option containing time position in seconds if found
+fn extract_time_from_progress(line: &str) -> Option<f64> {
+    // Extract time from FFmpeg progress line (e.g., "time=00:00:10.00")
+    if let Some(pos) = line.find("time=") {
+        let time_str = &line[pos + 5..];
+        if let Some(end) = time_str.find(' ') {
+            let time_val = &time_str[..end];
+            // Handle different time formats (HH:MM:SS.MS or seconds)
+            if time_val.contains(':') {
+                // Parse time in format HH:MM:SS.MS
+                let parts: Vec<&str> = time_val.split(':').collect();
+                if parts.len() == 3 {
+                    let hours = parts[0].parse::<f64>().unwrap_or(0.0);
+                    let minutes = parts[1].parse::<f64>().unwrap_or(0.0);
+                    let seconds = parts[2].parse::<f64>().unwrap_or(0.0);
+                    return Some(hours * 3600.0 + minutes * 60.0 + seconds);
+                }
+            } else if let Ok(secs) = time_val.parse::<f64>() {
+                return Some(secs);
+            }
+        }
+    }
+    None
+}
 
 #[cfg(test)]
 mod tests {
