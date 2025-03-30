@@ -3,6 +3,83 @@
 /// This module provides functionality for compositing multiple tracks
 /// together for rendering, handling different track types and their
 /// relationships.
+///
+/// ## Module Architecture
+///
+/// ```mermaid
+/// classDiagram
+///     class TrackCompositor {
+///         -timeline: Timeline
+///         -assets: Vec~AssetReference~
+///         -intermediate_files: Vec~IntermediateFile~
+///         -progress: Option~SharedProgressTracker~
+///         +new(Timeline, Vec~AssetReference~): TrackCompositor
+///         +set_progress_tracker(SharedProgressTracker): void
+///         +compose(RenderConfig): Result
+///         -prepare_tracks(RenderConfig): Result~HashMap~
+///         -composite_tracks(HashMap, RenderConfig, Path): Result
+///         -calculate_timeline_duration(): Duration
+///         -prepare_video_track(Track, RenderConfig): Result~PreparedTrack~
+///         -prepare_audio_track(Track, RenderConfig): Result~PreparedTrack~
+///         -prepare_subtitle_track(Track, RenderConfig): Result~PreparedTrack~
+///     }
+///
+///     class PreparedTrack {
+///         -id: TrackId
+///         -kind: TrackKind
+///         -file: Option~IntermediateFile~
+///         -clips: Vec~Clip~
+///         -duration: Duration
+///     }
+///
+///     class IntermediateFile {
+///         -path: PathBuf
+///         -_temp_dir: TempDir
+///         +new(suffix: String): Result~IntermediateFile~
+///         +path(): &Path
+///     }
+///
+///     class CompositionError {
+///         <<enumeration>>
+///         MissingAsset(AssetId)
+///         IncompatibleTracks(String)
+///         AssetFileError(String)
+///         IntermediateFileError(std::io::Error)
+///         FFmpeg(crate::ffmpeg::Error)
+///     }
+///
+///     TrackCompositor --> PreparedTrack: creates
+///     TrackCompositor --> IntermediateFile: manages
+///     TrackCompositor ..> CompositionError: produces
+///     PreparedTrack --> IntermediateFile: contains
+/// ```
+///
+/// ## Composition Process
+///
+/// ```mermaid
+/// flowchart TD
+///     Start([Start]) --> Init[Initialize TrackCompositor]
+///     Init --> SetProgress[Set Progress Tracker]
+///     SetProgress --> Compose[Call compose()]
+///     Compose --> PrepareTracks[Prepare tracks by kind]
+///     PrepareTracks --> Video[Prepare Video Tracks]
+///     PrepareTracks --> Audio[Prepare Audio Tracks]
+///     PrepareTracks --> Subtitle[Prepare Subtitle Tracks]
+///     Video --> CollectPrepared[Collect Prepared Tracks]
+///     Audio --> CollectPrepared
+///     Subtitle --> CollectPrepared
+///     CollectPrepared --> Composite[Composite Tracks Together]
+///     Composite --> CreateFFmpeg[Create FFmpeg Command]
+///     CreateFFmpeg --> AddInputs[Add Intermediate Files as Inputs]
+///     AddInputs --> SetFilters[Set FFmpeg Filters]
+///     SetFilters --> Execute[Execute FFmpeg Command]
+///     Execute --> Cleanup[Cleanup Temporary Files]
+///     Cleanup --> End([End])
+///     
+///     Cancel{Cancelled?} -.-> |Yes| Cleanup
+///     PrepareTracks -.-> Cancel
+///     Composite -.-> Cancel
+/// ```
 use std::collections::HashMap;
 use std::path::Path;
 

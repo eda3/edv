@@ -1,272 +1,212 @@
-# edv - Module Architecture Overview
+# edv - Architecture Overview
 
-This document provides an overview of the module architecture for the edv project.
+This document provides an overview of the edv application architecture, explaining the main modules and their relationships.
 
-## 1. Architecture Overview
+## Module Structure
 
-The edv project follows a modular architecture with clear separation of concerns. The architecture is designed to provide flexibility, maintainability, and extensibility while ensuring high performance for video processing operations.
+The edv application is divided into several key modules, each with a specific responsibility:
 
-### 1.1 High-Level Architecture
-
-```
-┌─────────────────┐     ┌─────────────────┐     ┌─────────────────┐
-│                 │     │                 │     │                 │
-│   CLI Layer     │────►│   Core Layer    │────►│  Processing     │
-│                 │     │                 │     │  Layer          │
-│                 │     │                 │     │                 │
-└─────────────────┘     └─────────────────┘     └─────────────────┘
-         │                      │                       │
-         │                      │                       │
-         ▼                      ▼                       ▼
-┌─────────────────┐            /│\                ┌─────────────────┐
-│                 │            / \                │                 │
-│  Project Layer  │◄──────────┘   └──────────────►│  Utility Layer  │
-│                 │     ┌─────────────────┐       │                 │
-│                 │     │                 │       │                 │
-└─────────────────┘     │  Audio Layer    │       └─────────────────┘
-                        │                 │               │
-                        └─────────────────┘               │
-                                │                         │
-                                ▼                         ▼
-                        ┌─────────────────┐     
-                        │                 │     
-                        │ Subtitle Layer  │     
-                        │                 │     
-                        │                 │     
-                        └─────────────────┘     
-```
-
-### 1.2 Design Principles
-
-1. **Separation of Concerns**: Each module has a well-defined responsibility
-2. **Dependency Injection**: Components depend on abstractions, not concrete implementations
-3. **Interface Stability**: Public interfaces are stable and well-documented
-4. **Error Handling**: Comprehensive error handling using Rust's Result type
-5. **Performance Awareness**: Performance-critical paths are identified and optimized
-6. **Testing**: All modules are designed to be testable in isolation
-
-## 2. Module Structure
-
-The edv project is organized into the following primary modules:
-
-| Module | Description | Key Responsibilities |
-|--------|-------------|---------------------|
-| CLI | Command-line interface | Command parsing, user interaction, help text |
-| Core | Core functionality | Configuration, logging, execution context |
-| Processing | Video processing | FFmpeg integration, operation execution |
-| Project | Project management | Timeline editing, asset management, clip management, project serialization, rendering |
-| Audio | Audio processing | Volume adjustment, extraction, replacement, fading |
-| Subtitle | Subtitle processing | Parsing, editing, formatting, styling, timing |
-| Utility | Shared utilities | Time code handling, file operations |
-
-### 2.1 Dependencies Between Modules
-
-```
-cli → core → processing ┐
- ↓      ↓        ↓      │
- └──► project ◄──┘      │
-      ↓    ↑            │
-      │    │            │
-      │    └── audio ◄──┘
-      │         ↓
-      │        subtitle
-      ↓
-    utility
-```
-
-## 3. Cross-Cutting Concerns
-
-Cross-cutting concerns that are handled across modules include:
-
-### 3.1 Error Handling
-
-Error handling is implemented using Rust's Result type system:
-
-```rust
-// Result type alias
-pub type Result<T> = std::result::Result<T, Error>;
-
-// Central error enum
-#[derive(Debug, Error)]
-pub enum Error {
-    #[error("IO error: {0}")]
-    Io(#[from] std::io::Error),
+```mermaid
+flowchart TD
+    subgraph Core["Core System"]
+        CLI["CLI Module"]
+        Core["Core Module"]
+        Asset["Asset Module"]
+        Utility["Utility Module"]
+    end
     
-    #[error("FFmpeg error: {0}")]
-    FFmpeg(String),
+    subgraph Media["Media Processing"]
+        FFmpeg["FFmpeg Module"]
+        Processing["Processing Module"]
+        Audio["Audio Module"]
+        Subtitle["Subtitle Module"]
+    end
     
-    // Other error variants...
-}
-```
-
-### 3.2 Logging
-
-Logging is implemented using a custom logging facade:
-
-```rust
-// Log level
-#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
-pub enum LogLevel {
-    Error,
-    Warning,
-    Info,
-    Debug,
-    Trace,
-}
-
-// Logger trait
-pub trait Logger: Send + Sync {
-    fn log(&self, level: LogLevel, message: &str);
+    subgraph Project["Project Management"]
+        Project["Project Module"]
+        Rendering["Rendering Module"]
+    end
     
-    // Level-specific method implementations...
-}
+    CLI --> Core
+    CLI --> Processing
+    Core --> Asset
+    Core --> Project
+    
+    Processing --> FFmpeg
+    Audio --> FFmpeg
+    Subtitle --> Utility
+    Project --> Asset
+    Project --> Rendering
+    
+    Rendering --> FFmpeg
+    Audio --> Utility
+    Asset --> Utility
 ```
 
-### 3.3 Configuration
+### Core Modules
 
-Configuration is handled through a central configuration system:
+- **CLI Module**: Provides the command-line interface for the application.
+- **Core Module**: Contains core data structures and utilities used throughout the application.
+- **Asset Module**: Manages media assets and their metadata.
+- **Utility Module**: Contains common utility functions and shared code.
 
-```rust
-// Configuration source
-pub enum ConfigSource {
-    File(PathBuf),
-    Environment,
-    Defaults,
-}
+### Media Processing Modules
 
-// Configuration manager
-pub struct ConfigManager {
-    sources: Vec<ConfigSource>,
-    current_config: AppConfig,
-}
+- **FFmpeg Module**: Integrates with FFmpeg for media processing operations.
+- **Processing Module**: Handles video processing operations through FFmpeg.
+- **Audio Module**: Manages audio extraction, processing, and replacement.
+- **Subtitle Module**: Handles subtitle extraction, editing, and embedding.
+
+### Project Management Modules
+
+- **Project Module**: Manages project data, including timelines and tracks.
+- **Rendering Module**: Handles the rendering of projects to output files.
+
+## Module Dependencies
+
+```mermaid
+classDiagram
+    CLI --> Core: Commands
+    CLI --> FFmpeg: Media Info
+    CLI --> Processing: Video Ops
+    CLI --> Project: Project Ops
+    
+    Core --> Asset: Manages
+    Core --> Project: Defines
+    
+    Project --> Rendering: Uses
+    Project --> Asset: References
+    Project --> Audio: Contains
+    Project --> Subtitle: Contains
+    
+    Processing --> FFmpeg: Utilizes
+    Audio --> FFmpeg: Uses
+    Subtitle --> Utility: Formatting
+    
+    Asset --> Utility: Time Handling
+    Audio --> Utility: Time Handling
+    Subtitle --> Utility: Time Handling
+    Rendering --> FFmpeg: Output
+    
+    class CLI {
+        Commands
+        Arguments
+        UI
+    }
+    
+    class Core {
+        Data Structures
+        Common Types
+    }
+    
+    class Asset {
+        Media Files
+        Metadata
+    }
+    
+    class Project {
+        Timeline
+        Tracks
+        Clips
+    }
+    
+    class FFmpeg {
+        Media Processing
+        Command Building
+    }
+    
+    class Processing {
+        Video Operations
+        Filter Management
+    }
+    
+    class Audio {
+        Audio Handling
+        Sound Effects
+    }
+    
+    class Subtitle {
+        Subtitle Parsing
+        Text Formatting
+    }
+    
+    class Rendering {
+        Composition
+        Output Generation
+    }
+    
+    class Utility {
+        Time Utilities
+        Format Conversions
+    }
 ```
 
-## 4. Module Integration
+## Data Flow
 
-### 4.1 Startup Sequence
+```mermaid
+flowchart LR
+    Input[Input Files] --> CLI
+    CLI --> Commands{Commands}
+    
+    Commands --> |Info| FFmpeg
+    Commands --> |Trim/Concat| Processing
+    Commands --> |Project| Project
+    Commands --> |Audio| Audio
+    Commands --> |Subtitle| Subtitle
+    
+    FFmpeg --> MediaInfo[Media Information]
+    Processing --> ProcessedVideo[Processed Video]
+    Audio --> ProcessedAudio[Processed Audio]
+    Subtitle --> ProcessedSubtitles[Processed Subtitles]
+    Project --> |Render| Rendering
+    
+    Rendering --> |Video Tracks| FFmpeg
+    Rendering --> |Audio Tracks| FFmpeg
+    Rendering --> |Subtitle Tracks| FFmpeg
+    
+    FFmpeg --> Output[Output File]
+```
 
-1. Initialize CLI and parse arguments
-2. Load configuration based on CLI arguments
-3. Initialize logging system
-4. Create execution context
-5. Execute the requested command
+## Key Interfaces
 
-### 4.2 Command Execution Flow
+1. **Command Line Interface**: Provides user access to application functionality.
+2. **FFmpeg Integration**: Abstracts FFmpeg command-line operations for higher-level modules.
+3. **Asset Management**: Provides a unified interface for managing media assets.
+4. **Project Management**: Handles project configuration, saving, and loading.
+5. **Rendering Pipeline**: Facilitates the rendering of projects to output files.
 
-1. Validate command arguments
-2. Create appropriate operation
-3. Initialize processing pipeline
-4. Execute operation
-5. Handle and report results
+## Future Architecture Enhancements
 
-### 4.3 Timeline Editing Flow
+The following architectural enhancements are planned for future versions:
 
-1. Load or create project
-2. Perform timeline operations
-3. Update project state
-4. Save project
+1. **Plugin System**: Allow for extensibility through custom plugins.
+2. **Distributed Processing**: Support for distributed rendering across multiple machines.
+3. **GPU Acceleration**: Integration with hardware acceleration for faster processing.
+4. **Cloud Storage**: Support for cloud-based asset storage and management.
+5. **Web API**: RESTful API for integration with web applications.
 
-## 5. Extension Points
+## Implementation Status
 
-The edv application provides several extension points for future enhancements:
+```mermaid
+gantt
+    title Implementation Progress
+    dateFormat  YYYY-MM-DD
+    
+    section Core System
+    Utility Module       :done, 2024-01-01, 2024-02-01
+    Core Module          :done, 2024-01-15, 2024-02-15
+    Asset Module         :done, 2024-02-01, 2024-03-01
+    CLI Module           :active, 2024-01-15, 2024-04-15
+    
+    section Media Processing
+    FFmpeg Module        :done, 2024-01-01, 2024-03-01
+    Processing Module    :active, 2024-02-01, 2024-04-01
+    Audio Module         :active, 2024-03-01, 2024-05-01
+    Subtitle Module      :active, 2024-03-15, 2024-05-15
+    
+    section Project Management
+    Project Module       :active, 2024-03-01, 2024-05-01
+    Rendering Module     :active, 2024-04-01, 2024-06-01
+```
 
-- Implementation of new operations
-- Implementation of custom effects
-- Plugin system (to be implemented in later development phases)
-
-## 6. Performance Considerations
-
-- **Memory Usage Optimization**: Efficient methods for processing large files
-- **CPU Optimization**: Parallel processing and FFmpeg optimization
-- **I/O Optimization**: Optimization of file operations
-
-## 7. Future Enhancements
-
-The module structure is designed to accommodate future enhancements:
-
-1. **GPU Acceleration**: Integration with hardware acceleration
-2. **Advanced Filtering**: Support for complex filter graphs
-3. **Extended Timeline**: Support for multi-track timeline editing
-4. **Batch Processing**: Enhanced support for batch operations
-5. **Plugin System**: Support for third-party plugins
-
-This modular architecture provides a solid foundation for building a powerful, efficient, and extensible video editing tool that meets the needs of command-line users while maintaining high performance and reliability. 
-
-## 8. Implementation Status (2024 Update)
-
-The implementation of the module architecture has progressed significantly, with some modules more fully developed than others. Below is the current implementation status of each module:
-
-### 8.1 Module Implementation Status
-
-| Module | Status | Implementation Level | Key Components Completed |
-|--------|--------|----------------------|--------------------------|
-| CLI | ✅ Complete | 90% | Command parsing, help system, output formatting |
-| Core | ✅ Complete | 95% | Configuration, logging, execution context |
-| Processing | ✅ Complete | 85% | FFmpeg wrapper, command building, execution |
-| Audio | ✅ Complete | 95% | Volume adjustment, extraction, replacement, fading |
-| Subtitle | ✅ Complete | 90% | Parsing, editing, formatting, styling, timing |
-| Project | ✅ Complete | 85% | Timeline structure, multi-track editing, asset management, edit history, serialization, rendering pipeline |
-| Utility | ✅ Complete | 80% | Time code handling, file operations, common utilities |
-
-### 8.2 Implementation Highlights
-
-1. **FFmpeg Integration Success**
-   - The FFmpeg wrapper module has been successfully implemented with a clean API
-   - Command building with proper parameter sanitization is working well
-   - Process execution and monitoring is fully functional
-
-2. **Audio Processing Capabilities**
-   - Complete implementation of volume adjustment with dB/percentage-based controls
-   - Flexible audio extraction with format selection and quality control
-   - Robust audio replacement with synchronization handling
-   - Customizable audio fading with various curve options
-
-3. **Subtitle Support**
-   - Comprehensive subtitle model implemented with support for multiple subtitle formats (SRT, VTT)
-   - Advanced editing capabilities including timing adjustments and text modifications
-   - Styling and positioning options for supported formats
-   - Subtitle overlapping resolution with multiple strategies
-
-4. **Project Management**
-   - Robust timeline model with multi-track support
-   - Track dependency management with relationship types
-   - Comprehensive edit history with undo/redo capabilities
-   - JSON serialization for project persistence
-   - Rendering pipeline with FFmpeg integration
-
-5. **Architecture Refinements**
-   - Improved error handling throughout the codebase
-   - Enhanced ownership model to follow Rust best practices
-   - Reference lifetime improvements to address borrowing issues
-   - Mutable borrowing optimizations for complex operations
-
-### 8.3 Next Development Priorities
-
-1. **Enhance Audio and Subtitle Capabilities**
-   - Add support for additional subtitle formats (ASS/SSA)
-   - Implement more advanced audio effects (equalization, normalization, noise reduction)
-   - Improve synchronization between audio, video, and subtitles
-   - Add batch processing for audio and subtitle operations
-
-2. **Optimize Rendering Pipeline**
-   - Enhance FFmpeg integration for better performance
-   - Implement parallel processing for rendering tasks
-   - Add more output format and codec options
-   - Improve progress reporting and cancellation support
-
-3. **Prepare for Advanced Features**
-   - Design and implement extension points for video effects and transitions
-   - Develop foundation for advanced timeline operations
-   - Create infrastructure for plugin support
-   - Add support for composition and layering effects
-
-### 8.4 Architecture Validation
-
-The implementation thus far has validated the core architectural decisions:
-
-- The separation of concerns has proven effective for development and testing
-- Module boundaries have remained clear and well-defined
-- Error handling strategies have worked well across module boundaries
-- Performance considerations have been successfully addressed
-
-This update reflects the current state of implementation as of March 2024, with development continuing according to the phased approach outlined in the implementation plan. 
+The architecture of edv is designed to be modular and extensible, with clear separation of concerns between different parts of the system. This enables easier maintenance, testing, and future enhancements to the application. 
