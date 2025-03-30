@@ -231,19 +231,88 @@ pub struct EditHistory {
 }
 impl EditHistory {
     // Methods: new, begin_transaction, commit_transaction, rollback_transaction,
-    //          record_action, push_entry (handles capacity), undo, redo,
+    //          record_action, push_entry (handling capacity), undo, redo,
     //          can_undo, can_redo, clear, undo_stack, redo_stack
+    //          peek_undo, peek_redo, shift_to_redo, shift_to_undo
 }
 
-// History specific error enum
+// History-specific error enumeration
 pub enum HistoryError { NothingToUndo, NothingToRedo, ApplyActionError(String), /* ... */ }
 ```
 **Responsibilities:**
-- Tracks timeline editing operations using `EditAction`.
-- Implements undo (`undo`) and redo (`redo`) functionality for individual actions and transactions.
-- Supports grouping multiple actions into atomic `TransactionGroup`s.
-- Manages the undo and redo stacks.
-- Handles potential errors during undo/redo operations.
+- Track timeline editing operations using `EditAction`.
+- Implement undo and redo functionality for individual actions and transactions.
+- Support grouping multiple actions into an atomic `TransactionGroup`.
+- Manage undo and redo stacks.
+- Handle potential errors during undo/redo operations.
+- Provide methods to inspect the next undo/redo actions without applying them.
+- Support direct manipulation of history stacks for efficient undo/redo implementation.
+
+#### Enhanced Edit History Management
+
+The Timeline module includes a sophisticated edit history management system with undo/redo operations and transaction grouping. Recent enhancements include:
+
+##### Inspection and Advanced Stack Management
+
+The `EditHistory` class now provides methods to peek at the next actions without executing them:
+
+```rust
+// Returns a reference to the next undo/redo action without removing it
+pub fn peek_undo(&self) -> Option<&HistoryEntry>
+pub fn peek_redo(&self) -> Option<&HistoryEntry>
+
+// Direct movement of entries between undo and redo stacks
+pub fn shift_to_redo(&mut self)  // Shifts the top entry from undo stack to redo stack
+pub fn shift_to_undo(&mut self)  // Shifts the top entry from redo stack to undo stack
+```
+
+These methods enable more efficient and flexible undo/redo implementations, particularly useful when:
+- Preview of undo/redo actions before application is needed
+- Custom handling of specific action types is required
+- Building UI features to display the next undo/redo action
+
+##### Transaction Management
+
+The timeline supports grouping multiple edit actions into a single transaction that can be undone or redone as a single unit:
+
+```rust
+// Start a new transaction group
+timeline.begin_transaction(Some("Keyframe Animation".to_string()));
+
+// Perform multiple operations as part of the transaction
+timeline.add_keyframe_with_history(...); 
+timeline.update_keyframe_with_history(...);
+timeline.move_clip_to_track_with_history(...);
+
+// Commit the transaction (all actions will be undone/redone together)
+timeline.commit_transaction();
+
+// Optionally cancel the transaction
+timeline.rollback_transaction();
+```
+
+This transaction mechanism is particularly useful for:
+- Complex operations involving multiple steps
+- Ensuring related changes are treated as an atomic unit
+- Improving user experience when undoing/redoing multi-step operations
+
+##### Integration with Timeline Operations
+
+The enhanced history system is integrated with all editing operations through `*_with_history` variants of regular editing methods:
+
+```rust
+// Standard operations
+timeline.add_clip(track_id, clip);
+timeline.remove_clip(track_id, clip_id);
+timeline.move_clip_to_track(source_track_id, target_track_id, clip_id, new_position);
+
+// History-tracking variants
+timeline.add_clip_with_history(track_id, clip);
+timeline.remove_clip_with_history(track_id, clip_id);
+timeline.move_clip_to_track_with_history(source_track_id, target_track_id, clip_id, new_position);
+```
+
+This design provides flexibility, allowing operations to be performed with or without history tracking while ensuring consistent behavior throughout the application.
 
 ### Rendering (`rendering/`)
 
@@ -323,103 +392,4 @@ pub enum SerializationError { Io(#[from] std::io::Error), Json(#[from] serde_jso
 
 - **IDs:** Uses `Uuid` wrapped in newtypes (`ProjectId`, `AssetId`, `ClipId`, `TrackId`) for unique identification.
 - **Time:** Uses custom `TimePosition` and `Duration` types (likely from `utility` module, needs verification).
-- **Error Handling:** Uses `thiserror` for defining custom error enums in each relevant submodule (`ProjectError`, `TimelineError`, `MultiTrackError`, `HistoryError`, `RenderError`, `SerializationError`). `Result` type aliases are provided.
-- **Immutability/Mutability:** Follows Rust's borrowing rules. Mutable methods often set a `modified` flag (e.g., in `SubtitleEditor`, needs check if Project/Timeline use similar flags). Edit history actions store necessary data to revert changes.
-- **FFmpeg Interaction:** Primarily handled within the `rendering` module (currently placeholders) for composing tracks and the final output.
-
-## Future Enhancements (from code analysis)
-
-- Implement actual FFmpeg calls in `TrackCompositor` for track preparation and final muxing.
-- Add `EditAction` variants for `SplitClip` and `MergeClips` in `timeline/history.rs` and implement their `apply`/`undo`.
-- Consider implementing binary serialization format in `serialization/`.
-- Refine `update_timing_dependent_track` and `update_visibility_dependent_track` in `timeline/multi_track.rs` for more complex scenarios.
-- Implement the `remove` strategy in `SubtitleEditor::fix_overlaps`.
-- Potentially integrate `Project::metadata` with `ProjectMetadata`.
-
-This updated documentation reflects the structure and key components found in the `src/project/` directory as of the last code review.
-
-## Keyframe Animation
-
-The project module now includes keyframe animation capabilities that allow for dynamic property changes over time. This feature enables smooth transitions and effects by interpolating values between key points.
-
-### Overview
-
-Keyframe animation enables the following capabilities:
-- Animate properties such as opacity, scale, position, and rotation
-- Support for different easing functions (linear, ease-in, ease-out, etc.)
-- Property value interpolation between keyframes
-- Full undo/redo support for all keyframe operations
-
-### Key Components
-
-#### Keyframe Point
-
-A `KeyframePoint` represents a single point in time with a specific value and easing function:
-
-```rust
-pub struct KeyframePoint {
-    time: TimePosition,
-    value: f64,
-    easing: EasingFunction,
-}
-```
-
-#### Keyframe Track
-
-A `KeyframeTrack` manages a sequence of keyframes for a single property:
-
-```rust
-pub struct KeyframeTrack {
-    property_name: String,
-    keyframes: Vec<KeyframePoint>,
-}
-```
-
-#### Keyframe Animation
-
-The `KeyframeAnimation` class manages multiple tracks for different properties:
-
-```rust
-pub struct KeyframeAnimation {
-    tracks: HashMap<String, KeyframeTrack>,
-    duration: Duration,
-}
-```
-
-#### Easing Functions
-
-The following easing functions are supported:
-
-- `Linear`: Constant rate of change
-- `EaseIn`: Gradually accelerates
-- `EaseOut`: Gradually decelerates
-- `EaseInOut`: Accelerates then decelerates
-- `Step`: Sudden change at the end of the duration
-
-### Integration with Timeline
-
-Keyframe animations are integrated directly with the timeline system:
-
-- Each `Track` can have an optional `KeyframeAnimation`
-- Animations are applied per-track and affect clip properties
-- Keyframe operations are fully undoable via the history system
-- Property values can be queried at any point in time
-
-### Usage Example
-
-```rust
-// Add keyframes to animate opacity from 0.0 to 1.0 over 10 seconds
-timeline.add_keyframe_with_history(track_id, "opacity", time_pos(0.0), 0.0, EasingFunction::EaseIn)?;
-timeline.add_keyframe_with_history(track_id, "opacity", time_pos(10.0), 1.0, EasingFunction::Linear)?;
-
-// Get the opacity value at a specific time
-let opacity = timeline.get_keyframe_value_at(track_id, "opacity", time_pos(5.0));
-```
-
-### Future Enhancements
-
-Planned improvements to the keyframe animation system include:
-- Support for multi-dimensional properties (like 2D/3D coordinates)
-- Bezier curve easing functions for more precise control
-- Visual keyframe editing tools
-- Animation presets for common effects
+- **Error Handling:** Uses `thiserror` for defining custom error enums in each relevant submodule (`ProjectError`, `
