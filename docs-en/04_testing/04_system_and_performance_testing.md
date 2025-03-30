@@ -12,6 +12,7 @@ System tests validate the entire application from end to end, simulating real-wo
 - **Environment**: Test across all target operating systems
 - **Automation**: Run as part of CI/CD pipeline, but less frequently than unit/integration tests
 - **Coverage**: Test major user workflows that represent actual use cases
+- **Status**: Currently planned with initial implementation starting in Q3 2024
 
 ### Key System Testing Areas
 
@@ -72,10 +73,12 @@ These tests focus on error handling and recovery:
   - Validate handling of disk space exhaustion
   - Test operation with limited CPU resources
 
-### System Testing Implementation
+### Planned System Testing Implementation
+
+The following represents the planned implementation approach for system testing, which will be developed in the upcoming quarters:
 
 ```rust
-// In tests/system/workflow_tests.rs
+// Planned implementation in tests/system/workflow_tests.rs
 #[test]
 fn test_complete_edit_workflow() {
     // Prepare a clean test environment
@@ -135,6 +138,7 @@ Performance tests measure and verify the efficiency of operations, ensuring the 
 - **Profiling**: Identify performance bottlenecks in critical paths
 - **Regression Testing**: Ensure changes don't degrade performance
 - **Scalability**: Test with large files and batch operations to ensure linear scaling
+- **Status**: Currently in planning phase with implementation targeted for Q4 2024
 
 ### Key Performance Testing Areas
 
@@ -214,10 +218,12 @@ These tests focus on parallel processing:
   - Validate resource limits enforcement
   - Measure resource release timing
 
-### Performance Testing Implementation
+### Planned Performance Testing Implementation
+
+The following represents the planned approach for performance testing, which will be implemented in upcoming development phases:
 
 ```rust
-// In benches/processing_bench.rs
+// Planned implementation in benches/processing_bench.rs
 use criterion::{black_box, criterion_group, criterion_main, Criterion, BenchmarkId};
 use edv::core::config::AppConfig;
 use edv::processing::pipeline::ProcessingPipeline;
@@ -314,140 +320,94 @@ criterion_main!(benches);
 7. **Stress Testing**: Include tests that push the system beyond normal operating conditions
 8. **Documentation**: Document performance characteristics and system requirements
 
-This comprehensive approach to system and performance testing ensures that the edv project delivers a reliable, efficient video editing tool that meets user expectations across different environments and usage scenarios. 
+## Implementation Status Update (March 2024)
 
-## Implementation Status Update (2024)
-
-As of March 2024, system and performance testing implementation is in progress, with significant strides made in establishing the foundation for comprehensive testing:
+As of March 2024, system and performance testing is primarily in the planning phase, with some initial manual testing being performed during development:
 
 ### System Testing Status
 
-| System Test Area | Status | Implementation Level | Key Progress |
-|-----------------|--------|----------------------|-------------|
-| Installation & Setup | ✅ Complete | 85% | FFmpeg detection, configuration initialization |
-| Core Workflows | ✅ Complete | 80% | Basic editing operations, command execution |
-| Project Workflows | 🔄 In Progress | 45% | Basic project operations tested |
-| Error Recovery | 🔄 In Progress | 60% | Basic error handling scenarios |
-| Cross-Platform | ✅ Complete | 75% | Core functionality on all target platforms |
-| Resource Handling | 🔄 In Progress | 50% | Basic resource limit testing |
+| System Test Area | Status | Implementation Level | Plan |
+|-----------------|--------|----------------------|------|
+| Installation & Setup | 🟠 Planned | 15% | Initial manual test cases defined, automation planned for Q3 2024 |
+| Core Workflows | 🟠 Planned | 20% | Key workflows identified, test fixtures in preparation |
+| Project Workflows | 🟠 Planned | 10% | Basic project operations defined, implementation pending |
+| Error Recovery | 🟡 Initial | 15% | Some error handling manually tested, formal tests in planning |
+| Cross-Platform | 🟡 Initial | 20% | Basic verification on target platforms, comprehensive testing planned |
+| Resource Handling | 🔴 Not Started | 5% | Initial planning phase only |
 
 ### Performance Testing Status
 
-| Performance Test Area | Status | Implementation Level | Key Metrics Established |
-|----------------------|--------|----------------------|-------------------------|
-| Processing Speed | 🔄 In Progress | 65% | Basic operation benchmarks |
-| Memory Usage | 🔄 In Progress | 55% | Memory profiles for core operations |
-| Disk I/O | 🔄 In Progress | 40% | File operation throughput baselines |
-| Concurrency | 🔶 Planned | 25% | Initial threading models tested |
-| Large File Handling | 🔄 In Progress | 50% | Scaling tests with increasing file sizes |
+| Performance Test Area | Status | Implementation Level | Plan |
+|----------------------|--------|----------------------|------|
+| Processing Speed | 🟡 Initial | 20% | Manual benchmarks performed, formal framework planned |
+| Memory Usage | 🟡 Initial | 15% | Basic memory profiling, comprehensive testing pending |
+| Disk I/O | 🔴 Not Started | 5% | Initial planning phase only |
+| Concurrency | 🔴 Not Started | 5% | Initial planning phase only |
+| Large File Handling | 🟡 Initial | 10% | Basic manual tests with large files, formal testing planned |
 
-### System Testing Achievements
+### Current System Testing Activities
 
-1. **End-to-End Workflow Validation**
-   - Successfully tested complete trim, filter, and concatenation workflows
-   - Validated command execution from CLI to final output
-   - Verified correct parameter passing and application
-   - Established validation of output correctness
+1. **Manual End-to-End Testing**
+   - During development, basic end-to-end testing is conducted manually
+   - Core operations (trim, filter, concat) are tested for correctness
+   - Output files are manually verified for correctness and quality
+   - Error conditions are manually tested as they are encountered
 
-   Example of a validated workflow:
-   ```
-   1. Input video (1080p, 2 minutes) → Trim operation (30s segment) → Output verification
-   2. Output from step 1 → Filter application (brightness adjustment) → Output verification
-   3. Multiple outputs → Concatenation → Final output validation
-   ```
+2. **Cross-Platform Verification**
+   - Basic functionality is verified on Linux, macOS, and Windows
+   - Platform-specific issues are addressed as they are discovered
+   - Environment setup verification is conducted manually
 
-2. **Installation and Setup Testing**
-   - Verified FFmpeg detection and compatibility checking
-   - Tested configuration file generation and loading
-   - Validated environment variable handling
-   - Confirmed proper setup across operating systems
+3. **Error Handling Checks**
+   - Common error conditions are manually tested
+   - Error reporting clarity is evaluated
+   - Recovery mechanisms are tested on an ad-hoc basis
 
-3. **Error Handling Validation**
-   - Tested graceful handling of missing input files
-   - Verified user-friendly error messages for common issues
-   - Validated recovery from invalid parameters
-   - Confirmed proper exit codes for various error conditions
+### Current Performance Assessment Activities
 
-### Performance Testing Achievements
+1. **Basic Performance Evaluation**
+   - Core operations are manually timed during development
+   - Rough performance characteristics are documented
+   - Major performance issues are addressed as identified
 
-1. **Operation Benchmarking**
-   - Established baseline performance for core operations:
-     - Trim: ~1.5x realtime speed for 1080p content on reference hardware
-     - Filter: ~1.2x realtime for basic filters on 1080p content
-     - Concat: ~2.0x realtime for direct stream copy operations
-   - Implemented consistent benchmark methodology
-   - Created reference test media for repeatable measurements
+2. **Memory Monitoring**
+   - Basic memory usage is monitored during development
+   - Memory leaks are checked using standard tools
+   - Resource cleanup is verified manually
 
-2. **Memory Profiling**
-   - Developed memory usage profiles for key operations
-   - Identified and addressed initial memory optimization opportunities:
-     - Reduced allocation in command building
-     - Optimized buffer management for file operations
-     - Implemented streaming approaches for large files
-   - Established memory usage expectations for documentation
+3. **Large File Testing**
+   - Occasional testing with large files to ensure scalability
+   - Performance with 4K and long-duration content is manually evaluated
+   - Memory and resource usage is monitored during these tests
 
-3. **Cross-Platform Performance Baselines**
-   - Measured performance variations across:
-     - Linux: Baseline reference platform
-     - macOS: ~95% of Linux performance
-     - Windows: ~90% of Linux performance for most operations
-   - Documented platform-specific considerations
-   - Implemented adjustments for platform-specific optimizations
+### System and Performance Testing Roadmap
 
-### Current System Testing Challenges
+#### Q2 2024: Foundation Development
+- Define comprehensive test plan for system and performance testing
+- Create test fixtures and standardized test media
+- Develop initial framework for automated system tests
+- Establish performance measurement methodology
+- Define key performance indicators and metrics
 
-1. **Complex Timeline Testing**
-   - **Challenge**: Testing multi-track timeline rendering with various effects
-   - **Progress**: Basic test cases implemented, complex scenarios in development
-   - **Plan**: Create standardized timeline test cases with predictable outputs
+#### Q3 2024: System Testing Implementation
+- Implement automated tests for core workflows
+- Develop installation and setup tests
+- Create error recovery and edge case tests
+- Build cross-platform test matrix
+- Implement baseline validation for output correctness
 
-2. **Cross-Platform Consistency**
-   - **Challenge**: Ensuring consistent behavior across operating systems
-   - **Progress**: Core functionality verified, addressing platform-specific issues
-   - **Plan**: Expand test matrix with more platform variations
+#### Q4 2024: Performance Testing Implementation
+- Implement benchmark framework using Criterion
+- Develop memory profiling and tracking tests
+- Create disk I/O performance tests
+- Implement thread scaling and concurrency tests
+- Build performance regression detection
 
-3. **Resource Limit Testing**
-   - **Challenge**: Testing behavior under restricted resources
-   - **Progress**: Basic tests implemented for memory constraints
-   - **Plan**: Develop more sophisticated resource limitation simulation
+#### Q1 2025: Advanced Testing & Integration
+- Integrate system tests into CI/CD pipeline
+- Implement performance regression tracking
+- Develop resource constraint simulation tests
+- Create stress testing framework
+- Implement comprehensive reporting system
 
-### Current Performance Testing Challenges
-
-1. **Benchmark Variability**
-   - **Challenge**: Ensuring consistent, comparable performance measurements
-   - **Progress**: Implemented statistical approaches to handle variation
-   - **Plan**: Further refine methodology to reduce measurement noise
-
-2. **Hardware Variation**
-   - **Challenge**: Accounting for diverse hardware configurations
-   - **Progress**: Established baseline hardware profiles for comparisons
-   - **Plan**: Develop normalized metrics to compare across configurations
-
-3. **Large-Scale Testing**
-   - **Challenge**: Testing with very large files and projects
-   - **Progress**: Initial scaling tests implemented up to 4K/30min content
-   - **Plan**: Expand test data to include longer, higher-resolution content
-
-### Next Steps for System and Performance Testing
-
-1. **Expanded Timeline Testing**
-   - Developing comprehensive tests for timeline-based editing
-   - Creating validation methods for complex timeline renders
-   - Implementing tests for timeline state consistency
-
-2. **Performance Optimization Focus**
-   - Identifying critical performance paths based on profiling
-   - Establishing performance budgets for key operations
-   - Implementing optimization targets for upcoming development
-
-3. **Automated Performance Regression Testing**
-   - Integrating performance tests into CI pipeline
-   - Implementing comparison with historical data
-   - Creating alerts for significant performance regressions
-
-4. **Resource Efficiency Testing**
-   - Expanding tests for memory, CPU, and I/O efficiency
-   - Implementing long-running stability tests
-   - Developing tests for resource usage under varied conditions
-
-System and performance testing will continue to evolve as the project progresses, with increased focus on the modules still under development, particularly the Project and Asset modules. 
+This roadmap ensures that by mid-2025, the edv project will have comprehensive system and performance testing in place to validate its functionality, correctness, and efficiency across all supported platforms and use cases. 
