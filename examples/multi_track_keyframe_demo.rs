@@ -2,6 +2,23 @@
 ///
 /// このサンプルでは、複数のビデオトラックとオーディオトラックを含むプロジェクトを作成し、
 /// キーフレームアニメーションを使って不透明度や位置を時間とともに変化させます。
+///
+/// # 実行方法
+///
+/// ```bash
+/// # WSL環境で実行する場合は、TMPDIR環境変数を設定してから実行してください
+/// # まず、一時ディレクトリを作成
+/// mkdir -p output/temp
+/// chmod -R 1777 output
+///
+/// # 次に、環境変数を設定して実行
+/// TMPDIR=$(pwd)/output/temp cargo run --example multi_track_keyframe_demo
+/// ```
+///
+/// # TODO
+///
+/// * WSL環境で実行時の一時ディレクトリ作成の問題を修正する
+/// * より柔軟なメディアファイルパスの指定方法を導入する
 use std::path::{Path, PathBuf};
 
 use edv::ffmpeg::FFmpeg;
@@ -16,6 +33,10 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     let ffmpeg = FFmpeg::detect()?;
     println!("FFmpeg detected: {}", ffmpeg.path().display());
     println!("FFmpeg version: {}", ffmpeg.version());
+
+    // 出力ディレクトリを作成
+    let output_dir = PathBuf::from("output");
+    std::fs::create_dir_all(&output_dir)?;
 
     // プロジェクトを作成
     let mut project = Project::new("キーフレームマルチトラックサンプル");
@@ -188,7 +209,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     )?;
 
     // 出力ファイルのパスを設定
-    let output_path = PathBuf::from("output/keyframe_animation_output.mp4");
+    let output_path = output_dir.join("keyframe_animation_output.mp4");
 
     // レンダリング設定を作成
     let render_config = RenderConfig::new(output_path.clone())
