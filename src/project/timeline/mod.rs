@@ -1,3 +1,4 @@
+use std::collections::HashMap;
 /// Timeline management functionality.
 ///
 /// This module provides functionality for creating, editing, and managing
@@ -5,6 +6,7 @@
 use uuid::Uuid;
 
 pub mod history;
+pub mod keyframes;
 pub mod multi_track;
 
 use crate::utility::time::{Duration, TimePosition};
@@ -240,6 +242,9 @@ pub struct Track {
 
     /// Whether the track is locked for editing.
     locked: bool,
+
+    /// Optional keyframe animation applied to this track
+    keyframes: Option<keyframes::KeyframeAnimation>,
 }
 
 impl Track {
@@ -258,6 +263,7 @@ impl Track {
             clips: Vec::new(),
             muted: false,
             locked: false,
+            keyframes: None,
         }
     }
 
@@ -391,16 +397,49 @@ impl Track {
 
         Duration::from_seconds(end.as_seconds())
     }
+
+    /// Gets the keyframe animation applied to this track.
+    #[must_use]
+    pub fn keyframes(&self) -> Option<&keyframes::KeyframeAnimation> {
+        self.keyframes.as_ref()
+    }
+
+    /// Gets the keyframe animation applied to this track (mutable).
+    #[must_use]
+    pub fn keyframes_mut(&mut self) -> Option<&mut keyframes::KeyframeAnimation> {
+        self.keyframes.as_mut()
+    }
+
+    /// Sets the keyframe animation for this track.
+    pub fn set_keyframes(&mut self, keyframes: Option<keyframes::KeyframeAnimation>) {
+        self.keyframes = keyframes;
+    }
+
+    /// Creates a new keyframe animation for this track if none exists.
+    pub fn create_keyframes(&mut self) -> &mut keyframes::KeyframeAnimation {
+        if self.keyframes.is_none() {
+            // トラックの長さに基づいてキーフレームアニメーションの期間を設定
+            let duration = self.duration();
+            self.keyframes = Some(keyframes::KeyframeAnimation::new(duration));
+        }
+        self.keyframes.as_mut().unwrap()
+    }
 }
 
-/// A timeline containing multiple tracks.
+/// Timeline data structure.
 #[derive(Debug, Clone)]
 pub struct Timeline {
     /// Tracks in the timeline.
     tracks: Vec<Track>,
 
-    /// Multi-track manager for handling track relationships.
+    /// Mapping from track ID to index in the tracks vector.
+    track_index_map: HashMap<TrackId, usize>,
+
+    /// Multi-track relationship manager.
     multi_track_manager: multi_track::MultiTrackManager,
+
+    /// Edit history.
+    history: history::EditHistory,
 }
 
 impl Timeline {
@@ -409,7 +448,9 @@ impl Timeline {
     pub fn new() -> Self {
         Self {
             tracks: Vec::new(),
+            track_index_map: HashMap::new(),
             multi_track_manager: multi_track::MultiTrackManager::new(),
+            history: history::EditHistory::new(),
         }
     }
 
@@ -899,6 +940,270 @@ impl Timeline {
             .sort_by(|a, b| a.position().partial_cmp(&b.position()).unwrap());
 
         Ok(())
+    }
+
+    /// Adds a keyframe to a track for a specific property.
+    ///
+    /// # Arguments
+    ///
+    /// * `track_id` - The ID of the track to add the keyframe to
+    /// * `property` - The property name to animate
+    /// * `time` - The time position of the keyframe
+    /// * `value` - The value at the keyframe
+    /// * `easing` - The easing function to use
+    ///
+    /// # Returns
+    ///
+    /// A `Result` containing `()` if the keyframe was successfully added,
+    /// or an error if the operation failed.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the track doesn't exist or the keyframe couldn't be added.
+    pub fn add_keyframe(
+        &mut self,
+        track_id: TrackId,
+        property: &str,
+        time: crate::utility::time::TimePosition,
+        value: f64,
+        easing: keyframes::EasingFunction,
+    ) -> Result<()> {
+        let track = self
+            .get_track_mut(track_id)
+            .ok_or(TimelineError::TrackNotFound(track_id))?;
+
+        // トラックにキーフレームアニメーションがなければ作成
+        let keyframes = track.create_keyframes();
+
+        // キーフレームを追加
+        keyframes
+            .add_keyframe(property, time, value, easing)
+            .map_err(|e| TimelineError::InvalidOperation(format!("キーフレーム追加エラー: {}", e)))
+    }
+
+    /// Adds a keyframe to a track for a specific property and records the action in history.
+    ///
+    /// # Arguments
+    ///
+    /// * `track_id` - The ID of the track to add the keyframe to
+    /// * `property` - The property name to animate
+    /// * `time` - The time position of the keyframe
+    /// * `value` - The value at the keyframe
+    /// * `easing` - The easing function to use
+    ///
+    /// # Returns
+    ///
+    /// A `Result` containing `()` if the keyframe was successfully added,
+    /// or an error if the operation failed.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the track doesn't exist or the keyframe couldn't be added.
+    pub fn add_keyframe_with_history(
+        &mut self,
+        track_id: TrackId,
+        property: &str,
+        time: crate::utility::time::TimePosition,
+        value: f64,
+        easing: keyframes::EasingFunction,
+    ) -> Result<()> {
+        // アクションを実行
+        self.add_keyframe(track_id, property, time, value, easing)?;
+
+        // 履歴に記録
+        let action = history::EditAction::AddKeyframe {
+            track_id,
+            property: property.to_string(),
+            time,
+            value,
+            easing,
+        };
+
+        self.history.record(action);
+        Ok(())
+    }
+
+    /// Gets the animated property value at a specific time.
+    ///
+    /// # Arguments
+    ///
+    /// * `track_id` - The ID of the track
+    /// * `property` - The property name
+    /// * `time` - The time position to get the value at
+    ///
+    /// # Returns
+    ///
+    /// An `Option` containing the interpolated value at the given time, or `None`
+    /// if the track doesn't exist, doesn't have keyframe animation, or the property
+    /// doesn't have keyframes.
+    #[must_use]
+    pub fn get_keyframe_value_at(
+        &self,
+        track_id: TrackId,
+        property: &str,
+        time: crate::utility::time::TimePosition,
+    ) -> Option<f64> {
+        self.get_track(track_id)
+            .and_then(|track| track.keyframes())
+            .and_then(|keyframes| keyframes.get_value_at(property, time))
+    }
+
+    /// Removes a keyframe from a track.
+    ///
+    /// # Arguments
+    ///
+    /// * `track_id` - The ID of the track
+    /// * `property` - The property name
+    /// * `time` - The time position of the keyframe to remove
+    ///
+    /// # Returns
+    ///
+    /// A `Result` containing `()` if the keyframe was successfully removed,
+    /// or an error if the operation failed.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the track doesn't exist, the track doesn't have keyframe
+    /// animation, or the keyframe couldn't be found.
+    pub fn remove_keyframe(
+        &mut self,
+        track_id: TrackId,
+        property: &str,
+        time: crate::utility::time::TimePosition,
+    ) -> Result<()> {
+        let track = self
+            .get_track_mut(track_id)
+            .ok_or(TimelineError::TrackNotFound(track_id))?;
+
+        if let Some(keyframes) = track.keyframes_mut() {
+            if let Some(track) = keyframes.get_track_mut(property) {
+                track.remove_keyframe(time).map_err(|e| {
+                    TimelineError::InvalidOperation(format!("キーフレーム削除エラー: {}", e))
+                })
+            } else {
+                Err(TimelineError::InvalidOperation(format!(
+                    "プロパティが存在しません: {}",
+                    property
+                )))
+            }
+        } else {
+            Err(TimelineError::InvalidOperation(
+                "トラックにキーフレームアニメーションがありません".to_string(),
+            ))
+        }
+    }
+
+    /// Removes a keyframe from a track and records the action in history.
+    ///
+    /// # Arguments
+    ///
+    /// * `track_id` - The ID of the track
+    /// * `property` - The property name
+    /// * `time` - The time position of the keyframe to remove
+    ///
+    /// # Returns
+    ///
+    /// A `Result` containing `()` if the keyframe was successfully removed,
+    /// or an error if the operation failed.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the track doesn't exist, the track doesn't have keyframe
+    /// animation, or the keyframe couldn't be found.
+    pub fn remove_keyframe_with_history(
+        &mut self,
+        track_id: TrackId,
+        property: &str,
+        time: crate::utility::time::TimePosition,
+    ) -> Result<()> {
+        // 削除前にキーフレームの情報を保存
+        let value_and_easing = self
+            .get_track(track_id)
+            .and_then(|track| track.keyframes())
+            .and_then(|keyframes| keyframes.get_track(property))
+            .and_then(|track| track.keyframes().iter().find(|kf| kf.time() == time))
+            .map(|kf| (kf.value(), kf.easing()));
+
+        if let Some((value, easing)) = value_and_easing {
+            // アクションを実行
+            self.remove_keyframe(track_id, property, time)?;
+
+            // 履歴に記録
+            let action = history::EditAction::RemoveKeyframe {
+                track_id,
+                property: property.to_string(),
+                time,
+                value,
+                easing,
+            };
+
+            self.history.record(action);
+            Ok(())
+        } else {
+            Err(TimelineError::InvalidOperation(
+                "キーフレームが見つかりません".to_string(),
+            ))
+        }
+    }
+
+    /// Updates a keyframe on a track and records the action in history.
+    ///
+    /// # Arguments
+    ///
+    /// * `track_id` - The ID of the track
+    /// * `property` - The property name
+    /// * `time` - The time position of the keyframe
+    /// * `new_value` - The new value for the keyframe
+    /// * `new_easing` - The new easing function for the keyframe
+    ///
+    /// # Returns
+    ///
+    /// A `Result` containing `()` if the keyframe was successfully updated,
+    /// or an error if the operation failed.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the track doesn't exist, the track doesn't have keyframe
+    /// animation, or the keyframe couldn't be found.
+    pub fn update_keyframe_with_history(
+        &mut self,
+        track_id: TrackId,
+        property: &str,
+        time: crate::utility::time::TimePosition,
+        new_value: f64,
+        new_easing: keyframes::EasingFunction,
+    ) -> Result<()> {
+        // 更新前の値を取得
+        let original_value_and_easing = self
+            .get_track(track_id)
+            .and_then(|track| track.keyframes())
+            .and_then(|keyframes| keyframes.get_track(property))
+            .and_then(|track| track.keyframes().iter().find(|kf| kf.time() == time))
+            .map(|kf| (kf.value(), kf.easing()));
+
+        if let Some((original_value, original_easing)) = original_value_and_easing {
+            // キーフレームを削除して新しい値で追加
+            self.remove_keyframe(track_id, property, time)?;
+            self.add_keyframe(track_id, property, time, new_value, new_easing)?;
+
+            // 履歴に記録
+            let action = history::EditAction::UpdateKeyframe {
+                track_id,
+                property: property.to_string(),
+                time,
+                original_value,
+                new_value,
+                original_easing,
+                new_easing,
+            };
+
+            self.history.record(action);
+            Ok(())
+        } else {
+            Err(TimelineError::InvalidOperation(
+                "キーフレームが見つかりません".to_string(),
+            ))
+        }
     }
 }
 

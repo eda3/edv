@@ -10,6 +10,8 @@ use crate::utility::time::{Duration, TimePosition};
 use super::Timeline;
 // Fix: Import the correct enum TrackRelationship
 use crate::project::timeline::multi_track::TrackRelationship;
+// キーフレームモジュールのインポート
+use crate::project::timeline::keyframes::{EasingFunction, KeyframeAnimation};
 
 /// Represents a single, reversible action performed on the timeline.
 ///
@@ -100,6 +102,42 @@ pub enum EditAction {
         target_id: TrackId,
         original_relationship_kind: TrackRelationship,
         updated_relationship_kind: TrackRelationship,
+    },
+    /// Added a keyframe to a track property.
+    AddKeyframe {
+        track_id: TrackId,
+        property: String,
+        time: TimePosition,
+        value: f64,
+        easing: EasingFunction,
+    },
+    /// Updated a keyframe on a track property.
+    UpdateKeyframe {
+        track_id: TrackId,
+        property: String,
+        time: TimePosition,
+        original_value: f64,
+        new_value: f64,
+        original_easing: EasingFunction,
+        new_easing: EasingFunction,
+    },
+    /// Removed a keyframe from a track property.
+    RemoveKeyframe {
+        track_id: TrackId,
+        property: String,
+        time: TimePosition,
+        value: f64,
+        easing: EasingFunction,
+    },
+    /// Added an entire keyframe animation to a track.
+    AddKeyframeAnimation {
+        track_id: TrackId,
+        animation: KeyframeAnimation,
+    },
+    /// Removed an entire keyframe animation from a track.
+    RemoveKeyframeAnimation {
+        track_id: TrackId,
+        animation: KeyframeAnimation,
     },
 }
 
@@ -291,6 +329,57 @@ impl UndoableAction for EditAction {
                 )?;
                 Ok(())
             }
+            EditAction::AddKeyframe {
+                track_id,
+                property,
+                time,
+                value,
+                easing,
+            } => {
+                timeline.add_keyframe(*track_id, property, *time, *value, *easing)
+            }
+            EditAction::UpdateKeyframe {
+                track_id,
+                property,
+                time,
+                new_value,
+                new_easing,
+                ..
+            } => {
+                // 既存のキーフレームを削除して新しいもので置き換える
+                timeline.remove_keyframe(*track_id, property, *time)?;
+                timeline.add_keyframe(*track_id, property, *time, *new_value, *new_easing)
+            }
+            EditAction::RemoveKeyframe {
+                track_id,
+                property,
+                time,
+                ..
+            } => {
+                timeline.remove_keyframe(*track_id, property, *time)
+            }
+            EditAction::AddKeyframeAnimation {
+                track_id,
+                animation,
+            } => {
+                let track = timeline
+                    .get_track_mut(*track_id)
+                    .ok_or(TimelineError::TrackNotFound(*track_id))?;
+                
+                track.set_keyframes(Some(animation.clone()));
+                Ok(())
+            }
+            EditAction::RemoveKeyframeAnimation {
+                track_id,
+                ..
+            } => {
+                let track = timeline
+                    .get_track_mut(*track_id)
+                    .ok_or(TimelineError::TrackNotFound(*track_id))?;
+                
+                track.set_keyframes(None);
+                Ok(())
+            }
         }
     }
 
@@ -453,6 +542,57 @@ impl UndoableAction for EditAction {
                 )?;
                 Ok(())
             }
+            EditAction::AddKeyframe {
+                track_id,
+                property,
+                time,
+                ..
+            } => {
+                timeline.remove_keyframe(*track_id, property, *time)
+            }
+            EditAction::UpdateKeyframe {
+                track_id,
+                property,
+                time,
+                original_value,
+                original_easing,
+                ..
+            } => {
+                // 更新されたキーフレームを削除して元のもので置き換える
+                timeline.remove_keyframe(*track_id, property, *time)?;
+                timeline.add_keyframe(*track_id, property, *time, *original_value, *original_easing)
+            }
+            EditAction::RemoveKeyframe {
+                track_id,
+                property,
+                time,
+                value,
+                easing,
+            } => {
+                timeline.add_keyframe(*track_id, property, *time, *value, *easing)
+            }
+            EditAction::AddKeyframeAnimation {
+                track_id,
+                ..
+            } => {
+                let track = timeline
+                    .get_track_mut(*track_id)
+                    .ok_or(TimelineError::TrackNotFound(*track_id))?;
+                
+                track.set_keyframes(None);
+                Ok(())
+            }
+            EditAction::RemoveKeyframeAnimation {
+                track_id,
+                animation,
+            } => {
+                let track = timeline
+                    .get_track_mut(*track_id)
+                    .ok_or(TimelineError::TrackNotFound(*track_id))?;
+                
+                track.set_keyframes(Some(animation.clone()));
+                Ok(())
+            }
         }
     }
 }
@@ -505,49 +645,64 @@ pub enum HistoryEntry {
     Group(TransactionGroup),
 }
 
-/// Manages the undo/redo history for timeline edits.
-#[derive(Debug, Clone, Default)]
+/// Error type for history operations.
+#[derive(Debug, thiserror::Error)]
+pub enum HistoryError {
+    /// No action to undo in the history.
+    #[error("Nothing to undo")]
+    NothingToUndo,
+
+    /// No action to redo in the history.
+    #[error("Nothing to redo")]
+    NothingToRedo,
+
+    /// Transaction is already in progress.
+    #[error("Transaction already in progress")]
+    TransactionInProgress,
+
+    /// No transaction is in progress.
+    #[error("No transaction in progress")]
+    NoTransactionInProgress,
+
+    /// Failed to apply action.
+    #[error("Failed to apply action: {0}")]
+    ApplyActionError(String),
+}
+
+/// Type alias for history operation results.
+pub type HistoryResult<T> = std::result::Result<T, HistoryError>;
+
+/// History of edit actions with undo/redo support.
+#[derive(Debug, Clone)]
 pub struct EditHistory {
     /// Stack of actions that can be undone.
     undo_stack: Vec<HistoryEntry>,
+
     /// Stack of actions that can be redone.
     redo_stack: Vec<HistoryEntry>,
-    /// Actions collected during an ongoing transaction.
+
+    /// Current transaction being built, if any.
     current_transaction: Option<TransactionGroup>,
-    /// Maximum number of history entries to keep (optional).
+
+    /// Maximum number of entries to store, if limited.
     capacity: Option<usize>,
 }
 
-/// Error types specific to history operations.
-#[derive(Debug, thiserror::Error, Clone, PartialEq, Eq)]
-pub enum HistoryError {
-    /// Attempted to undo when the undo stack is empty.
-    #[error("Nothing to undo")]
-    NothingToUndo,
-    /// Attempted to redo when the redo stack is empty.
-    #[error("Nothing to redo")]
-    NothingToRedo,
-    /// An error occurred while applying an action during undo/redo.
-    #[error("Failed to apply action during undo/redo: {0}")]
-    ApplyActionError(String),
-    /// A transaction was already in progress.
-    #[error("Transaction already in progress")]
-    TransactionInProgress,
-    /// No transaction is currently in progress.
-    #[error("No transaction in progress")]
-    NoTransactionInProgress,
-}
-
-pub type HistoryResult<T> = std::result::Result<T, HistoryError>;
-
 impl EditHistory {
-    /// Creates a new `EditHistory` with an optional capacity.
+    /// Creates a new empty edit history.
     #[must_use]
-    pub fn new(capacity: Option<usize>) -> Self {
+    pub fn new() -> Self {
         Self {
-            capacity,
-            ..Default::default()
+            undo_stack: Vec::new(),
+            redo_stack: Vec::new(),
+            current_transaction: None,
+            capacity: Some(100), // Default: store 100 undo actions
         }
+    }
+
+    /// Records an action in the history.
+    pub fn record(&mut self, action: EditAction) {
+        self.record_action(action);
     }
 
     /// Starts a new transaction.
@@ -787,8 +942,8 @@ mod tests {
 
     #[test]
     fn test_new_history() {
-        let history = EditHistory::new(Some(10));
-        assert_eq!(history.capacity, Some(10));
+        let history = EditHistory::new();
+        assert_eq!(history.capacity, Some(100));
         assert!(history.undo_stack.is_empty());
         assert!(history.redo_stack.is_empty());
         assert!(history.current_transaction.is_none());
@@ -798,7 +953,7 @@ mod tests {
 
     #[test]
     fn test_record_single_action() {
-        let mut history = EditHistory::new(None);
+        let mut history = EditHistory::new();
         let clip_id = ClipId::new();
         let track_id = TrackId::new();
         let action = EditAction::SetClipPosition {
@@ -829,7 +984,7 @@ mod tests {
 
     #[test]
     fn test_undo_redo_single_action() {
-        let mut history = EditHistory::new(None);
+        let mut history = EditHistory::new();
         let mut timeline = create_test_timeline();
         let track_id = timeline.add_track(TrackKind::Video);
         let clip_id = ClipId::new();
@@ -882,7 +1037,7 @@ mod tests {
 
     #[test]
     fn test_record_clears_redo_stack() {
-        let mut history = EditHistory::new(None);
+        let mut history = EditHistory::new();
         let mut timeline = create_test_timeline();
         let clip_id = ClipId::new();
         let track_kind = TrackKind::Video;
@@ -937,7 +1092,7 @@ mod tests {
 
     #[test]
     fn test_transaction_commit() {
-        let mut history = EditHistory::new(None);
+        let mut history = EditHistory::new();
         let clip_id = ClipId::new();
         let track_id = TrackId::new();
         let action1 = EditAction::SetClipPosition {
@@ -988,7 +1143,7 @@ mod tests {
 
     #[test]
     fn test_transaction_rollback() {
-        let mut history = EditHistory::new(None);
+        let mut history = EditHistory::new();
         let clip_id = ClipId::new();
         let track_id = TrackId::new();
         let action1 = EditAction::SetClipPosition {
@@ -1011,7 +1166,7 @@ mod tests {
 
     #[test]
     fn test_undo_redo_transaction() {
-        let mut history = EditHistory::new(None);
+        let mut history = EditHistory::new();
         let mut timeline = create_test_timeline();
         // Fix: Add track and clip first
         let track_id = timeline.add_track(TrackKind::Video);
@@ -1131,7 +1286,7 @@ mod tests {
 
     #[test]
     fn test_history_apply_undo_single_action() {
-        let mut history = EditHistory::new(None);
+        let mut history = EditHistory::new();
         let mut timeline = create_test_timeline();
         let track_id = timeline.add_track(TrackKind::Video);
         let clip_id = ClipId::new();
@@ -1174,7 +1329,7 @@ mod tests {
 
     #[test]
     fn test_clear_history() {
-        let mut history = EditHistory::new(None);
+        let mut history = EditHistory::new();
         let mut timeline = create_test_timeline();
         // Fix: Add track and clip first
         let track_id = timeline.add_track(TrackKind::Video);
@@ -1262,7 +1417,7 @@ mod tests {
 
     #[test]
     fn test_set_track_name_apply_undo_redo() {
-        let mut history = EditHistory::new(None);
+        let mut history = EditHistory::new();
         let mut timeline = create_test_timeline();
         let track_id = timeline.add_track(TrackKind::Video);
         let original_name = timeline.get_track(track_id).unwrap().name().to_string();
@@ -1309,7 +1464,7 @@ mod tests {
 
     #[test]
     fn test_set_track_muted_apply_undo_redo() {
-        let mut history = EditHistory::new(None);
+        let mut history = EditHistory::new();
         let mut timeline = create_test_timeline();
         let track_id = timeline.add_track(TrackKind::Audio);
         let original_muted = timeline.get_track(track_id).unwrap().is_muted(); // Should be false by default
@@ -1356,7 +1511,7 @@ mod tests {
 
     #[test]
     fn test_set_track_locked_apply_undo_redo() {
-        let mut history = EditHistory::new(None);
+        let mut history = EditHistory::new();
         let mut timeline = create_test_timeline();
         let track_id = timeline.add_track(TrackKind::Video);
         let original_locked = timeline.get_track(track_id).unwrap().is_locked(); // Should be false by default
@@ -1403,7 +1558,7 @@ mod tests {
 
     #[test]
     fn test_add_relationship_apply_undo_redo() {
-        let mut history = EditHistory::new(None);
+        let mut history = EditHistory::new();
         let mut timeline = create_test_timeline();
         let track1_id = timeline.add_track(TrackKind::Video);
         let track2_id = timeline.add_track(TrackKind::Video);
@@ -1472,7 +1627,7 @@ mod tests {
 
     #[test]
     fn test_remove_relationship_apply_undo_redo() {
-        let mut history = EditHistory::new(None);
+        let mut history = EditHistory::new();
         let mut timeline = create_test_timeline();
         let track1_id = timeline.add_track(TrackKind::Video);
         let track2_id = timeline.add_track(TrackKind::Video);
@@ -1545,7 +1700,7 @@ mod tests {
 
     #[test]
     fn test_update_relationship_apply_undo_redo() {
-        let mut history = EditHistory::new(None);
+        let mut history = EditHistory::new();
         let mut timeline = create_test_timeline();
         let track1_id = timeline.add_track(TrackKind::Video);
         let track2_id = timeline.add_track(TrackKind::Audio);

@@ -79,6 +79,12 @@ impl Duration {
         self.seconds
     }
 
+    /// Gets the duration in seconds as f64 (for compatibility with std::time::Duration).
+    #[must_use]
+    pub fn as_secs_f64(&self) -> f64 {
+        self.seconds
+    }
+
     /// Gets the duration in milliseconds.
     #[must_use]
     pub fn as_millis(&self) -> f64 {
@@ -205,6 +211,18 @@ impl TimePosition {
     pub fn from_seconds(seconds: f64) -> Self {
         Self {
             seconds: seconds.max(0.0),
+        }
+    }
+
+    /// Creates a new time position from a std::time::Duration.
+    ///
+    /// # Arguments
+    ///
+    /// * `duration` - The std::time::Duration to convert
+    #[must_use]
+    pub fn from_std_duration(duration: std::time::Duration) -> Self {
+        Self {
+            seconds: duration.as_secs_f64().max(0.0),
         }
     }
 

@@ -390,3 +390,9 @@ impl Project {
         rendering::render_project(self.clone(), config).map_err(ProjectError::Rendering)
     }
 }
+
+// timeline機能をエクスポート
+pub use timeline::keyframes::{
+    EasingFunction, KeyframeAnimation, KeyframeError, KeyframePoint, KeyframeTrack,
+};
+pub use timeline::{Clip, Timeline, TimelineError, Track, TrackId, TrackKind};
