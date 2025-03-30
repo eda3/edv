@@ -6,6 +6,7 @@
 use std::path::PathBuf;
 
 use clap::{Parser, Subcommand};
+use log::debug;
 
 use crate::core::console::ConsoleLogger;
 use crate::core::{Config, Context, LogLevel, Logger};
@@ -57,53 +58,55 @@ pub struct Cli {
 /// by the application, along with their specific arguments.
 #[derive(Subcommand)]
 pub enum Commands {
-    /// Trim a video to specified start and end times
+    /// Trims a video file to the specified start and end times
     Trim {
-        /// Input video file path
-        #[clap(short, long, value_parser)]
-        input: String,
+        /// Input file path
+        #[arg(short, long)]
+        input: PathBuf,
 
-        /// Output video file path
-        #[clap(short, long, value_parser)]
-        output: String,
+        /// Output file path
+        #[arg(short, long)]
+        output: PathBuf,
 
-        /// Start time (format: HH:MM:SS.mmm or seconds)
-        #[clap(short, long)]
-        start: Option<String>,
+        /// Start time in seconds
+        #[arg(short, long)]
+        start: f64,
 
-        /// End time (format: HH:MM:SS.mmm or seconds)
-        #[clap(short, long)]
-        end: Option<String>,
-
-        /// Re-encode the video instead of using stream copy
-        #[clap(short, long, action)]
-        recompress: bool,
+        /// End time in seconds
+        #[arg(short, long)]
+        end: f64,
     },
 
-    /// Concatenate multiple video files
-    Concat {
-        /// Input video files
-        #[clap(short, long, value_parser, num_args = 1..)]
-        input: Vec<String>,
-
-        /// Output video file path
-        #[clap(short, long, value_parser)]
-        output: String,
-
-        /// Re-encode the video instead of using stream copy
-        #[clap(short, long, action)]
-        recompress: bool,
-    },
-
-    /// Display information about a media file
+    /// Displays information about a video file
     Info {
-        /// Input media file path
-        #[clap(value_parser)]
-        input: String,
+        /// Input file path
+        #[arg(short, long)]
+        input: PathBuf,
+    },
 
-        /// Show detailed information
-        #[clap(short, long, action)]
-        detailed: bool,
+    /// Renders a project to a video file
+    Render {
+        /// Project file path
+        #[arg(short, long)]
+        project: PathBuf,
+
+        /// Output file path
+        #[arg(short, long)]
+        output: PathBuf,
+    },
+
+    /// Undoes the last edit in a project
+    ProjectUndo {
+        /// Project file path
+        #[arg(short, long)]
+        project: PathBuf,
+    },
+
+    /// Redoes the last undone edit in a project
+    ProjectRedo {
+        /// Project file path
+        #[arg(short, long)]
+        project: PathBuf,
     },
 }
 
@@ -132,7 +135,9 @@ impl App {
     ///
     /// `Result<()>` indicating success or failure.
     pub fn initialize(&mut self) -> Result<()> {
-        // Register all commands
+        debug!("Initializing application");
+
+        // Register commands
         self.register_commands()?;
 
         self.logger.info("Application initialized");
@@ -161,6 +166,14 @@ impl App {
         self.command_registry
             .register(Box::new(commands::RenderCommand::new()))?;
 
+        // Register project undo command
+        self.command_registry
+            .register(Box::new(commands::ProjectUndoCommand::new()))?;
+
+        // Register project redo command
+        self.command_registry
+            .register(Box::new(commands::ProjectRedoCommand::new()))?;
+
         Ok(())
     }
 
@@ -184,32 +197,24 @@ impl App {
                 output,
                 start,
                 end,
-                recompress,
             } => {
                 self.logger.debug(&format!(
-                    "Executing trim command: input={}, output={}, start={:?}, end={:?}, recompress={}",
-                    input, output, start, end, recompress
+                    "Executing trim command: input={}, output={}, start={}, end={}",
+                    input.display(),
+                    output.display(),
+                    start,
+                    end
                 ));
 
                 // Get the TrimCommand from the registry and execute it
                 if let Ok(trim_cmd) = self.command_registry.get("trim") {
                     // Build the arguments list
-                    let mut args = vec![input, output];
-
-                    // Add optional arguments
-                    if let Some(start_time) = start {
-                        args.push("--start".to_string());
-                        args.push(start_time);
-                    }
-
-                    if let Some(end_time) = end {
-                        args.push("--end".to_string());
-                        args.push(end_time);
-                    }
-
-                    if recompress {
-                        args.push("--recompress".to_string());
-                    }
+                    let mut args = vec![
+                        input.to_string_lossy().to_string(),
+                        output.to_string_lossy().to_string(),
+                    ];
+                    args.push(start.to_string());
+                    args.push(end.to_string());
 
                     // Execute the command with arguments and the already created context
                     trim_cmd.execute(&context, &args)?;
@@ -217,38 +222,76 @@ impl App {
                     return Err(super::Error::UnknownCommand("trim".to_string()));
                 }
             }
-            Commands::Concat {
-                input,
-                output,
-                recompress,
-            } => {
+            Commands::Info { input } => {
                 self.logger.debug(&format!(
-                    "Executing concat command: input={:?}, output={}, recompress={}",
-                    input, output, recompress
-                ));
-
-                // Command implementation will be added later
-                // This is a placeholder to avoid unused variable warnings
-                self.logger.info("Concat command executed successfully");
-            }
-            Commands::Info { input, detailed } => {
-                self.logger.debug(&format!(
-                    "Executing info command: input={}, detailed={}",
-                    input, detailed
+                    "Executing info command: input={}",
+                    input.display()
                 ));
 
                 // Get the InfoCommand from the registry and execute it
                 if let Ok(info_cmd) = self.command_registry.get("info") {
                     // Build the arguments list
-                    let mut args = vec![input];
-                    if detailed {
-                        args.push("--detailed".to_string());
-                    }
+                    let mut args = vec![input.to_string_lossy().to_string()];
 
                     // Execute the command with arguments and the already created context
                     info_cmd.execute(&context, &args)?;
                 } else {
                     return Err(super::Error::UnknownCommand("info".to_string()));
+                }
+            }
+            Commands::Render { project, output } => {
+                self.logger.debug(&format!(
+                    "Executing render command: project={}, output={}",
+                    project.display(),
+                    output.display()
+                ));
+
+                // Get the RenderCommand from the registry and execute it
+                if let Ok(render_cmd) = self.command_registry.get("render") {
+                    // Build the arguments list
+                    let mut args = vec![
+                        project.to_string_lossy().to_string(),
+                        output.to_string_lossy().to_string(),
+                    ];
+
+                    // Execute the command with arguments and the already created context
+                    render_cmd.execute(&context, &args)?;
+                } else {
+                    return Err(super::Error::UnknownCommand("render".to_string()));
+                }
+            }
+            Commands::ProjectUndo { project } => {
+                self.logger.debug(&format!(
+                    "Executing project undo command: project={}",
+                    project.display()
+                ));
+
+                // Get the ProjectUndoCommand from the registry and execute it
+                if let Ok(project_undo_cmd) = self.command_registry.get("project-undo") {
+                    // Build the arguments list
+                    let mut args = vec![project.to_string_lossy().to_string()];
+
+                    // Execute the command with arguments and the already created context
+                    project_undo_cmd.execute(&context, &args)?;
+                } else {
+                    return Err(super::Error::UnknownCommand("project-undo".to_string()));
+                }
+            }
+            Commands::ProjectRedo { project } => {
+                self.logger.debug(&format!(
+                    "Executing project redo command: project={}",
+                    project.display()
+                ));
+
+                // Get the ProjectRedoCommand from the registry and execute it
+                if let Ok(project_redo_cmd) = self.command_registry.get("project-redo") {
+                    // Build the arguments list
+                    let mut args = vec![project.to_string_lossy().to_string()];
+
+                    // Execute the command with arguments and the already created context
+                    project_redo_cmd.execute(&context, &args)?;
+                } else {
+                    return Err(super::Error::UnknownCommand("project-redo".to_string()));
                 }
             }
         }

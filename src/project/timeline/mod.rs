@@ -3,13 +3,16 @@ use std::collections::HashMap;
 ///
 /// This module provides functionality for creating, editing, and managing
 /// video timelines, including tracks, clips, and multi-track relationships.
+use std::fmt;
 use uuid::Uuid;
 
 pub mod history;
 pub mod keyframes;
 pub mod multi_track;
 
+use crate::project::{AssetId, AssetReference, ClipId};
 use crate::utility::time::{Duration, TimePosition};
+use multi_track::TrackRelationship;
 
 // Export history types as well
 pub use history::{
@@ -25,10 +28,7 @@ pub enum TimelineError {
 
     /// Error when a clip is not found.
     #[error("Clip not found in track {track}: {clip}")]
-    ClipNotFound {
-        track: TrackId,
-        clip: crate::project::ClipId,
-    },
+    ClipNotFound { track: TrackId, clip: ClipId },
 
     /// Error when clips overlap.
     #[error("Clip overlap at position {position}")]
@@ -41,6 +41,34 @@ pub enum TimelineError {
     /// Error when the operation would result in an invalid state.
     #[error("Invalid operation: {0}")]
     InvalidOperation(String),
+
+    /// Timeline has no video tracks, which is needed for visual output.
+    #[error("Timeline has no video tracks")]
+    NoVideoTracks,
+
+    /// Timeline has overlapping clips that might cause rendering issues.
+    #[error("Track {0} has overlapping clips: {1:?}")]
+    OverlappingClips(TrackId, Vec<ClipId>),
+
+    /// Timeline has gaps between clips that might cause unexpected output.
+    #[error("Track {0} has gaps between clips")]
+    GapsBetweenClips(TrackId),
+
+    /// Referenced asset is missing or invalid.
+    #[error("Track {0} clip {1} references invalid asset {2}")]
+    InvalidAssetReference(TrackId, ClipId, AssetId),
+
+    /// Unhandled relationships between tracks.
+    #[error("Invalid relationship between tracks {0} and {1}")]
+    InvalidTrackRelationship(TrackId, TrackId),
+
+    /// Track contains invalid configuration.
+    #[error("Track {0} has invalid configuration: {1}")]
+    InvalidTrackConfiguration(TrackId, String),
+
+    /// Validation error
+    #[error("Timeline validation failed with {0} errors")]
+    ValidationFailed(usize),
 }
 
 /// Type alias for timeline operation results.
@@ -103,10 +131,10 @@ impl std::fmt::Display for TrackKind {
 #[derive(Debug, Clone)]
 pub struct Clip {
     /// Unique identifier for the clip.
-    id: crate::project::ClipId,
+    id: ClipId,
 
     /// ID of the asset used in the clip.
-    asset_id: crate::project::AssetId,
+    asset_id: AssetId,
 
     /// Position of the clip in the timeline.
     position: TimePosition,
@@ -134,8 +162,8 @@ impl Clip {
     /// * `source_end` - The end position in the source asset
     #[must_use]
     pub fn new(
-        id: crate::project::ClipId,
-        asset_id: crate::project::AssetId,
+        id: ClipId,
+        asset_id: AssetId,
         position: TimePosition,
         duration: Duration,
         source_start: TimePosition,
@@ -153,13 +181,13 @@ impl Clip {
 
     /// Gets the ID of the clip.
     #[must_use]
-    pub fn id(&self) -> crate::project::ClipId {
+    pub fn id(&self) -> ClipId {
         self.id
     }
 
     /// Gets the ID of the asset used in the clip.
     #[must_use]
-    pub fn asset_id(&self) -> crate::project::AssetId {
+    pub fn asset_id(&self) -> AssetId {
         self.asset_id
     }
 
@@ -326,13 +354,13 @@ impl Track {
     }
 
     /// Gets a mutable reference to a clip by its ID.
-    pub fn get_clip_mut(&mut self, clip_id: crate::project::ClipId) -> Option<&mut Clip> {
+    pub fn get_clip_mut(&mut self, clip_id: ClipId) -> Option<&mut Clip> {
         self.clips.iter_mut().find(|clip| clip.id() == clip_id)
     }
 
     /// Gets a reference to a clip by its ID.
     #[must_use]
-    pub fn get_clip(&self, clip_id: crate::project::ClipId) -> Option<&Clip> {
+    pub fn get_clip(&self, clip_id: ClipId) -> Option<&Clip> {
         self.clips.iter().find(|clip| clip.id() == clip_id)
     }
 
@@ -376,7 +404,7 @@ impl Track {
     /// # Returns
     ///
     /// `true` if the clip was found and removed, `false` otherwise.
-    pub fn remove_clip(&mut self, clip_id: crate::project::ClipId) -> bool {
+    pub fn remove_clip(&mut self, clip_id: ClipId) -> bool {
         let len = self.clips.len();
         self.clips.retain(|clip| clip.id() != clip_id);
         self.clips.len() < len
@@ -489,7 +517,7 @@ impl Timeline {
     ///
     /// An `Option<TrackId>` containing the ID of the track if found, otherwise `None`.
     #[must_use]
-    pub fn find_track_containing_clip(&self, clip_id: crate::project::ClipId) -> Option<TrackId> {
+    pub fn find_track_containing_clip(&self, clip_id: ClipId) -> Option<TrackId> {
         self.tracks.iter().find_map(|track| {
             if track.get_clip(clip_id).is_some() {
                 Some(track.id())
@@ -624,11 +652,7 @@ impl Timeline {
     /// Returns an error if:
     /// * The track does not exist
     /// * The clip does not exist in the track
-    pub fn remove_clip_with_history(
-        &mut self,
-        track_id: TrackId,
-        clip_id: crate::project::ClipId,
-    ) -> Result<()> {
+    pub fn remove_clip_with_history(&mut self, track_id: TrackId, clip_id: ClipId) -> Result<()> {
         // First, get the clip and its position in the track
         let clip_info = {
             let track = self
@@ -682,11 +706,7 @@ impl Timeline {
     /// Returns an error if:
     /// * The track does not exist
     /// * The clip does not exist in the track
-    pub fn remove_clip(
-        &mut self,
-        track_id: TrackId,
-        clip_id: crate::project::ClipId,
-    ) -> Result<()> {
+    pub fn remove_clip(&mut self, track_id: TrackId, clip_id: ClipId) -> Result<()> {
         let track = self
             .get_track_mut(track_id)
             .ok_or(TimelineError::TrackNotFound(track_id))?;
@@ -748,9 +768,9 @@ impl Timeline {
     pub fn split_clip(
         &mut self,
         track_id: TrackId,
-        clip_id: crate::project::ClipId,
+        clip_id: ClipId,
         position: TimePosition,
-    ) -> Result<crate::project::ClipId> {
+    ) -> Result<ClipId> {
         // Get the track
         let track = self
             .get_track_mut(track_id)
@@ -812,7 +832,7 @@ impl Timeline {
         ) = position_check;
 
         // Create the second (new) clip
-        let new_clip_id = crate::project::ClipId::new();
+        let new_clip_id = ClipId::new();
         let new_clip = Clip::new(
             new_clip_id,
             asset_id,
@@ -860,8 +880,8 @@ impl Timeline {
     pub fn merge_clips(
         &mut self,
         track_id: TrackId,
-        first_clip_id: crate::project::ClipId,
-        second_clip_id: crate::project::ClipId,
+        first_clip_id: ClipId,
+        second_clip_id: ClipId,
     ) -> Result<()> {
         // Get the track
         let track = self
@@ -962,7 +982,7 @@ impl Timeline {
         &mut self,
         source_track_id: TrackId,
         target_track_id: TrackId,
-        clip_id: crate::project::ClipId,
+        clip_id: ClipId,
         new_position: Option<TimePosition>,
     ) -> Result<()> {
         // Check if source and target tracks exist
@@ -1063,7 +1083,7 @@ impl Timeline {
         &mut self,
         source_track_id: TrackId,
         target_track_id: TrackId,
-        clip_id: crate::project::ClipId,
+        clip_id: ClipId,
         new_position: Option<TimePosition>,
     ) -> Result<()> {
         // First, get the clip and its position
@@ -1322,7 +1342,7 @@ impl Timeline {
         &mut self,
         track_id: TrackId,
         property: &str,
-        time: crate::utility::time::TimePosition,
+        time: TimePosition,
         value: f64,
         easing: keyframes::EasingFunction,
     ) -> Result<()> {
@@ -1361,7 +1381,7 @@ impl Timeline {
         &mut self,
         track_id: TrackId,
         property: &str,
-        time: crate::utility::time::TimePosition,
+        time: TimePosition,
         value: f64,
         easing: keyframes::EasingFunction,
     ) -> Result<()> {
@@ -1405,7 +1425,7 @@ impl Timeline {
         &self,
         track_id: TrackId,
         property: &str,
-        time: crate::utility::time::TimePosition,
+        time: TimePosition,
     ) -> Option<f64> {
         self.get_track(track_id)
             .and_then(|track| track.keyframes())
@@ -1433,7 +1453,7 @@ impl Timeline {
         &mut self,
         track_id: TrackId,
         property: &str,
-        time: crate::utility::time::TimePosition,
+        time: TimePosition,
     ) -> Result<()> {
         let track = self
             .get_track_mut(track_id)
@@ -1478,7 +1498,7 @@ impl Timeline {
         &mut self,
         track_id: TrackId,
         property: &str,
-        time: crate::utility::time::TimePosition,
+        time: TimePosition,
     ) -> Result<()> {
         // 削除前にキーフレームの情報を保存
         let property_string = property.to_string();
@@ -1538,7 +1558,7 @@ impl Timeline {
         &mut self,
         track_id: TrackId,
         property: &str,
-        time: crate::utility::time::TimePosition,
+        time: TimePosition,
         new_value: f64,
         new_easing: keyframes::EasingFunction,
     ) -> Result<()> {
@@ -1584,6 +1604,198 @@ impl Timeline {
                 "キーフレームが見つかりません".to_string(),
             ))
         }
+    }
+
+    /// Validates the timeline for correctness and completeness.
+    ///
+    /// This method performs a comprehensive check of the timeline to ensure
+    /// it can be properly rendered:
+    /// - Ensures there is at least one video track
+    /// - Checks for overlapping clips in tracks
+    /// - Validates all asset references
+    /// - Checks track relationships
+    ///
+    /// # Returns
+    ///
+    /// A list of validation errors, or an empty vector if the timeline is valid.
+    pub fn validate(&self, assets: &[AssetReference]) -> Vec<TimelineError> {
+        let mut errors = Vec::new();
+
+        // Check if there's at least one video track
+        let has_video_track = self
+            .tracks
+            .iter()
+            .any(|track| track.kind() == TrackKind::Video);
+
+        if !has_video_track {
+            errors.push(TimelineError::NoVideoTracks);
+        }
+
+        // Check each track for issues
+        for track in &self.tracks {
+            // Check for overlapping clips
+            let overlapping_clips = self.find_overlapping_clips(track.id());
+            if !overlapping_clips.is_empty() {
+                errors.push(TimelineError::OverlappingClips(
+                    track.id(),
+                    overlapping_clips,
+                ));
+            }
+
+            // Check for gaps between clips if continuous playback is expected
+            if track.kind() == TrackKind::Video && self.has_gaps_between_clips(track.id()) {
+                errors.push(TimelineError::GapsBetweenClips(track.id()));
+            }
+
+            // Validate asset references
+            for clip in track.get_clips() {
+                let asset_id = clip.asset_id();
+                let asset_exists = assets.iter().any(|asset| asset.id == asset_id);
+                if !asset_exists {
+                    errors.push(TimelineError::InvalidAssetReference(
+                        track.id(),
+                        clip.id(),
+                        asset_id,
+                    ));
+                }
+            }
+        }
+
+        // Validate track relationships, if MultiTrackManager is used
+        let multi_track = &self.multi_track_manager;
+
+        // Get all relationships
+        let relationships = multi_track.get_all_relationships();
+
+        // Iterate through all relationships
+        for (source_id, targets) in relationships {
+            for (target_id, relationship) in targets {
+                // Ensure both tracks still exist
+                if !self.has_track(*source_id) || !self.has_track(*target_id) {
+                    errors.push(TimelineError::InvalidTrackRelationship(
+                        *source_id, *target_id,
+                    ));
+                    continue;
+                }
+
+                // Validate specific relationship types
+                match relationship {
+                    TrackRelationship::Locked => {
+                        // Locked tracks should have the same number of clips
+                        let source_track = self.get_track(*source_id).unwrap();
+                        let target_track = self.get_track(*target_id).unwrap();
+                        if source_track.get_clips().len() != target_track.get_clips().len() {
+                            errors.push(TimelineError::InvalidTrackRelationship(
+                                *source_id, *target_id,
+                            ));
+                        }
+                    }
+                    TrackRelationship::TimingDependent => {
+                        // Check that timing dependencies make sense
+                        // (For example, ensure source clips don't end after dependent clips)
+                    }
+                    _ => {
+                        // Other relationship types may have their own validation
+                    }
+                }
+            }
+        }
+
+        errors
+    }
+
+    /// Finds clips that overlap in time within a track.
+    ///
+    /// # Arguments
+    ///
+    /// * `track_id` - The ID of the track to check
+    ///
+    /// # Returns
+    ///
+    /// A vector of clip IDs that overlap with other clips.
+    fn find_overlapping_clips(&self, track_id: TrackId) -> Vec<ClipId> {
+        let mut overlapping_clips = Vec::new();
+        let track = match self.get_track(track_id) {
+            Some(t) => t,
+            None => return overlapping_clips,
+        };
+
+        // Get all clips
+        let clips = track.get_clips();
+
+        // Check for overlaps - compare each clip with all others
+        for i in 0..clips.len() {
+            for j in i + 1..clips.len() {
+                let clip_a = &clips[i];
+                let clip_b = &clips[j];
+
+                let a_start = clip_a.position();
+                let a_end = a_start + clip_a.duration();
+                let b_start = clip_b.position();
+
+                // If clip_a ends after clip_b starts, they overlap
+                if a_end > b_start {
+                    if !overlapping_clips.contains(&clip_a.id()) {
+                        overlapping_clips.push(clip_a.id());
+                    }
+                    if !overlapping_clips.contains(&clip_b.id()) {
+                        overlapping_clips.push(clip_b.id());
+                    }
+                }
+            }
+        }
+
+        overlapping_clips
+    }
+
+    /// Checks if there are gaps between clips in a track.
+    ///
+    /// # Arguments
+    ///
+    /// * `track_id` - The ID of the track to check
+    ///
+    /// # Returns
+    ///
+    /// `true` if there are gaps between clips, `false` otherwise.
+    fn has_gaps_between_clips(&self, track_id: TrackId) -> bool {
+        let track = match self.get_track(track_id) {
+            Some(t) => t,
+            None => return false,
+        };
+
+        // Get all clips
+        let clips = track.get_clips();
+        if clips.len() <= 1 {
+            return false; // No gaps possible with 0 or 1 clip
+        }
+
+        // 手動で位置でソートしたクリップのインデックスを作成
+        let mut sorted_indices: Vec<usize> = (0..clips.len()).collect();
+        sorted_indices.sort_by(|&a, &b| {
+            clips[a]
+                .position()
+                .partial_cmp(&clips[b].position())
+                .unwrap_or(std::cmp::Ordering::Equal)
+        });
+
+        // Check for gaps between adjacent clips
+        for i in 0..sorted_indices.len() - 1 {
+            let current_idx = sorted_indices[i];
+            let next_idx = sorted_indices[i + 1];
+
+            let current_clip = &clips[current_idx];
+            let next_clip = &clips[next_idx];
+
+            let current_end = current_clip.position() + current_clip.duration();
+            let next_start = next_clip.position();
+
+            // If there's a gap between the end of the current clip and the start of the next
+            if current_end < next_start {
+                return true;
+            }
+        }
+
+        false
     }
 }
 

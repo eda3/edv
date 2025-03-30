@@ -849,6 +849,134 @@ fn extract_time_from_progress(line: &str) -> Option<f64> {
     None
 }
 
+/// Undoes the last edit in a project.
+#[derive(Debug)]
+pub struct ProjectUndoCommand;
+
+impl ProjectUndoCommand {
+    /// Creates a new project undo command.
+    #[must_use]
+    pub fn new() -> Self {
+        Self
+    }
+}
+
+impl Command for ProjectUndoCommand {
+    fn name(&self) -> &str {
+        "project-undo"
+    }
+
+    fn description(&self) -> &str {
+        "Undoes the last edit in a project"
+    }
+
+    fn usage(&self) -> &str {
+        "project-undo --project <project_file>"
+    }
+
+    fn execute(&self, context: &Context, args: &[String]) -> Result<()> {
+        if args.is_empty() {
+            return Err(Error::MissingArgument("Project file path".to_string()));
+        }
+
+        let project_path = &args[0];
+        context
+            .logger
+            .info(&format!("Undoing last edit in project: {project_path}"));
+
+        // Load the project
+        let project_result = crate::project::Project::load(&std::path::Path::new(project_path));
+        let mut project = match project_result {
+            Ok(p) => p,
+            Err(e) => {
+                return Err(Error::ProjectError(format!("Failed to load project: {e}")));
+            }
+        };
+
+        // Undo the last edit
+        match project.timeline.undo() {
+            Ok(_) => {
+                context.logger.info("Successfully undid last edit");
+
+                // Save the project with updated state
+                if let Err(e) = project.save(&std::path::Path::new(project_path)) {
+                    return Err(Error::ProjectError(format!(
+                        "Failed to save project after undo: {e}"
+                    )));
+                }
+
+                context.logger.info("Project saved successfully");
+                Ok(())
+            }
+            Err(e) => Err(Error::ProjectError(format!("Failed to undo: {e}"))),
+        }
+    }
+}
+
+/// Redoes the last undone edit in a project.
+#[derive(Debug)]
+pub struct ProjectRedoCommand;
+
+impl ProjectRedoCommand {
+    /// Creates a new project redo command.
+    #[must_use]
+    pub fn new() -> Self {
+        Self
+    }
+}
+
+impl Command for ProjectRedoCommand {
+    fn name(&self) -> &str {
+        "project-redo"
+    }
+
+    fn description(&self) -> &str {
+        "Redoes the last undone edit in a project"
+    }
+
+    fn usage(&self) -> &str {
+        "project-redo --project <project_file>"
+    }
+
+    fn execute(&self, context: &Context, args: &[String]) -> Result<()> {
+        if args.is_empty() {
+            return Err(Error::MissingArgument("Project file path".to_string()));
+        }
+
+        let project_path = &args[0];
+        context.logger.info(&format!(
+            "Redoing last undone edit in project: {project_path}"
+        ));
+
+        // Load the project
+        let project_result = crate::project::Project::load(&std::path::Path::new(project_path));
+        let mut project = match project_result {
+            Ok(p) => p,
+            Err(e) => {
+                return Err(Error::ProjectError(format!("Failed to load project: {e}")));
+            }
+        };
+
+        // Redo the last undone edit
+        match project.timeline.redo() {
+            Ok(_) => {
+                context.logger.info("Successfully redid last undone edit");
+
+                // Save the project with updated state
+                if let Err(e) = project.save(&std::path::Path::new(project_path)) {
+                    return Err(Error::ProjectError(format!(
+                        "Failed to save project after redo: {e}"
+                    )));
+                }
+
+                context.logger.info("Project saved successfully");
+                Ok(())
+            }
+            Err(e) => Err(Error::ProjectError(format!("Failed to redo: {e}"))),
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

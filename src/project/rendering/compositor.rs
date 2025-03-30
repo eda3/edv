@@ -547,6 +547,159 @@ impl TrackCompositor {
         max_duration
     }
 
+    /// Composes the timeline into a video file.
+    ///
+    /// # Arguments
+    ///
+    /// * `config` - The rendering configuration
+    ///
+    /// # Returns
+    ///
+    /// `Ok(())` if composition was successful, or an error if composition failed.
+    pub fn compose(&mut self, config: &RenderConfig) -> Result<()> {
+        // Ensure the timeline has tracks
+        if self.timeline.get_tracks().is_empty() {
+            return Err(CompositionError::IncompatibleTracks(
+                "Timeline has no tracks".to_string(),
+            ));
+        }
+
+        // Prepare tracks for composition
+        let prepared_tracks = self.prepare_tracks(config)?;
+
+        // Check if the composition has been canceled
+        if self.is_cancelled() {
+            return Err(CompositionError::IncompatibleTracks(
+                "Composition cancelled".to_string(),
+            ));
+        }
+
+        // Composite the prepared tracks
+        self.composite_tracks(prepared_tracks, config, &config.output_path)?;
+
+        Ok(())
+    }
+
+    /// Generates an FFmpeg filter graph for multi-track video composition.
+    ///
+    /// This function creates a complex filtergraph to layer multiple video tracks
+    /// according to their z-order and transparency.
+    ///
+    /// # Arguments
+    ///
+    /// * `video_tracks` - The prepared video tracks to compose
+    /// * `config` - The render configuration
+    ///
+    /// # Returns
+    ///
+    /// A string containing the FFmpeg filtergraph definition
+    fn generate_video_filtergraph(
+        &self,
+        video_tracks: &[&PreparedTrack],
+        config: &RenderConfig,
+    ) -> String {
+        // Track indices for input mapping (0-based in FFmpeg)
+        let mut filter_parts = Vec::new();
+        let mut overlay_chain = String::new();
+
+        // Sort tracks by z-order (typically order of addition is the z-order in simple cases)
+        // In a real implementation, this would use explicit z-order from the tracks
+        let mut ordered_tracks: Vec<&PreparedTrack> = video_tracks.to_vec();
+
+        // Sort by ID - we'll use the Debug representation as a simple way to compare
+        ordered_tracks.sort_by(|a, b| format!("{:?}", a.id).cmp(&format!("{:?}", b.id)));
+
+        // Process each track to prepare it for composition
+        for (i, track) in ordered_tracks.iter().enumerate() {
+            let input_index = i; // Assume track index matches FFmpeg input index
+
+            // Scale video to match output dimensions
+            let scale_filter = format!(
+                "[{input_index}:v] scale={width}:{height},setsar=1 [v{i}]",
+                input_index = input_index,
+                width = config.width,
+                height = config.height,
+                i = i
+            );
+            filter_parts.push(scale_filter);
+
+            // For the first track, just use it as the base
+            if i == 0 {
+                overlay_chain = format!("[v0]");
+            } else {
+                // For subsequent tracks, overlay them on top of the previous result
+                let overlay_filter = format!(
+                    "{prev}[v{current}] overlay=shortest=1 [v{next}]",
+                    prev = overlay_chain,
+                    current = i,
+                    next = i + 1
+                );
+                filter_parts.push(overlay_filter);
+                overlay_chain = format!("[v{}]", i + 1);
+            }
+        }
+
+        // Concatenate all filter parts with semicolons
+        filter_parts.join(";")
+    }
+
+    /// Generates an FFmpeg filter graph for multi-track audio composition.
+    ///
+    /// This function creates filters to mix multiple audio tracks together with
+    /// proper volume levels.
+    ///
+    /// # Arguments
+    ///
+    /// * `audio_tracks` - The prepared audio tracks to compose
+    /// * `config` - The render configuration
+    ///
+    /// # Returns
+    ///
+    /// A string containing the FFmpeg audio filtergraph definition
+    fn generate_audio_filtergraph(
+        &self,
+        audio_tracks: &[&PreparedTrack],
+        config: &RenderConfig,
+    ) -> String {
+        if audio_tracks.is_empty() {
+            return String::new();
+        }
+
+        // Track indices for input mapping
+        let mut filter_parts = Vec::new();
+        let mut amix_inputs = Vec::new();
+
+        // Process each track
+        for (i, _track) in audio_tracks.iter().enumerate() {
+            let input_index = i; // Assume track index matches FFmpeg input index
+
+            // Normalize audio to prevent clipping
+            let normalize_filter = format!(
+                "[{input_index}:a] aformat=sample_fmts=fltp:channel_layouts=stereo,volume=1.0 [a{i}]",
+                input_index = input_index,
+                i = i
+            );
+            filter_parts.push(normalize_filter);
+            amix_inputs.push(format!("[a{}]", i));
+        }
+
+        // Add the amix filter if we have multiple tracks
+        if audio_tracks.len() > 1 {
+            let amix_filter = format!(
+                "{} amix=inputs={}:duration=longest [aout]",
+                amix_inputs.join(""),
+                audio_tracks.len()
+            );
+            filter_parts.push(amix_filter);
+        } else {
+            // If only one track, just map it directly
+            filter_parts.push(format!("[a0] [aout]"));
+        }
+
+        // Concatenate all filter parts with semicolons
+        filter_parts.join(";")
+    }
+
     /// Composite the prepared tracks together.
     ///
     /// # Arguments
@@ -573,13 +726,63 @@ impl TrackCompositor {
         // FFmpegコマンドを構築
         let mut ffmpeg = FFmpegCommand::new();
 
-        // すべての入力ファイルを追加
+        // トラックをタイプ別に分類
+        let mut video_tracks: Vec<&PreparedTrack> = Vec::new();
+        let mut audio_tracks: Vec<&PreparedTrack> = Vec::new();
+        let mut subtitle_tracks: Vec<&PreparedTrack> = Vec::new();
+
+        // すべての入力ファイルを追加し、トラック種類で分類
         self.update_progress(RenderStage::Preparing);
 
         for track in prepared_tracks.values() {
             if let Some(file) = &track.file {
                 ffmpeg.add_input(file.path());
+
+                match track.kind {
+                    TrackKind::Video => video_tracks.push(track),
+                    TrackKind::Audio => audio_tracks.push(track),
+                    TrackKind::Subtitle => subtitle_tracks.push(track),
+                }
             }
+        }
+
+        // フィルタグラフの構築
+        let mut complex_filter = String::new();
+
+        // ビデオトラックのフィルタグラフを生成
+        if !video_tracks.is_empty() {
+            complex_filter.push_str(&self.generate_video_filtergraph(&video_tracks, config));
+        }
+
+        // オーディオトラックのフィルタグラフを生成
+        if !audio_tracks.is_empty() {
+            if !complex_filter.is_empty() {
+                complex_filter.push_str(";");
+            }
+            complex_filter.push_str(&self.generate_audio_filtergraph(&audio_tracks, config));
+        }
+
+        // フィルタグラフをコマンドに追加
+        if !complex_filter.is_empty() {
+            ffmpeg.args.push("-filter_complex".to_string());
+            ffmpeg.args.push(complex_filter);
+
+            // 出力ストリームマッピング
+            if !video_tracks.is_empty() {
+                ffmpeg.args.push("-map".to_string());
+                ffmpeg.args.push("[v]".to_string());
+            }
+
+            if !audio_tracks.is_empty() {
+                ffmpeg.args.push("-map".to_string());
+                ffmpeg.args.push("[aout]".to_string());
+            }
+        }
+
+        // 字幕トラックがある場合の処理
+        if !subtitle_tracks.is_empty() {
+            // TODO: 字幕の処理を実装
+            // 現在のところ、サポートなし
         }
 
         // 出力オプションを設定
@@ -590,6 +793,26 @@ impl TrackCompositor {
             .set_frame_rate(config.frame_rate)
             .set_video_size(config.width, config.height);
 
+        // 追加のエンコードオプション
+        if self.optimize_complex {
+            // 複雑なタイムラインのための最適化オプション
+            if video_tracks.len() > 3 {
+                // マルチパスエンコーディングを使用
+                ffmpeg.args.push("-pass".to_string());
+                ffmpeg.args.push("1".to_string());
+
+                // ビデオビットレートを調整
+                ffmpeg.args.push("-b:v".to_string());
+                ffmpeg
+                    .args
+                    .push(format!("{}k", config.width * config.height / 1000));
+
+                // スレッド数を指定
+                ffmpeg.args.push("-threads".to_string());
+                ffmpeg.args.push(num_cpus::get().to_string());
+            }
+        }
+
         // レンダリング開始
         self.update_progress(RenderStage::Rendering);
 
@@ -599,36 +822,8 @@ impl TrackCompositor {
         // 完了
         self.update_progress(RenderStage::PostProcessing);
 
-        // 一時ファイルはdrop時に自動的に削除される
-
         // レンダリング完成
         self.update_progress(RenderStage::Complete);
-
-        Ok(())
-    }
-
-    /// Composes the timeline into a video file.
-    ///
-    /// # Arguments
-    ///
-    /// * `config` - The rendering configuration
-    ///
-    /// # Returns
-    ///
-    /// `Ok(())` if composition was successful, or an error if composition failed.
-    pub fn compose(&mut self, config: &RenderConfig) -> Result<()> {
-        // Ensure the timeline has tracks
-        if self.timeline.get_tracks().is_empty() {
-            return Err(CompositionError::IncompatibleTracks(
-                "Timeline has no tracks".to_string(),
-            ));
-        }
-
-        // Prepare tracks for composition
-        let prepared_tracks = self.prepare_tracks(config)?;
-
-        // Composite the prepared tracks
-        self.composite_tracks(prepared_tracks, config, &config.output_path)?;
 
         Ok(())
     }
