@@ -14,16 +14,15 @@
 /// let ffmpeg = FFmpeg::locate().unwrap();
 /// adjust_volume(ffmpeg, "input.mp4", "output.mp4", 1.5);
 /// ```
-
 // Re-export public types from submodules
 pub use self::error::Error;
 pub use self::error::Result;
 
 pub mod error;
-pub mod volume;
 pub mod extractor;
-pub mod replacer;
 pub mod fade;
+pub mod replacer;
+pub mod volume;
 
 /// Common audio processing constants and utilities.
 pub mod common {
@@ -37,9 +36,7 @@ pub mod common {
     pub const DEFAULT_AUDIO_CODEC: &str = "aac";
 
     /// Standard audio file formats supported for extraction.
-    pub const SUPPORTED_AUDIO_FORMATS: &[&str] = &[
-        "mp3", "aac", "wav", "flac", "ogg"
-    ];
+    pub const SUPPORTED_AUDIO_FORMATS: &[&str] = &["mp3", "aac", "wav", "flac", "ogg"];
 
     /// Validates if the given audio format is supported.
     ///
@@ -120,14 +117,14 @@ mod tests {
     #[test]
     fn test_db_to_linear() {
         assert!((common::db_to_linear(0.0) - 1.0).abs() < 1e-10);
-        assert!((common::db_to_linear(6.0) - 2.0).abs() < 1e-10);
-        assert!((common::db_to_linear(-6.0) - 0.5).abs() < 1e-10);
+        assert!((common::db_to_linear(6.0) - 1.9952623149688797).abs() < 1e-10);
+        assert!((common::db_to_linear(-6.0) - 0.501187233627272).abs() < 1e-10);
     }
 
     #[test]
     fn test_linear_to_db() {
         assert!((common::linear_to_db(1.0) - 0.0).abs() < 1e-10);
-        assert!((common::linear_to_db(2.0) - 6.0).abs() < 1e-10);
-        assert!((common::linear_to_db(0.5) - (-6.0)).abs() < 1e-10);
+        assert!((common::linear_to_db(2.0) - 6.020599913279624).abs() < 1e-10);
+        assert!((common::linear_to_db(0.5) - (-6.020599913279624)).abs() < 1e-10);
     }
-} 
+}
