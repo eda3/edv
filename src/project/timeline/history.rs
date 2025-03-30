@@ -898,6 +898,40 @@ impl EditHistory {
     pub fn redo_stack(&self) -> &[HistoryEntry] {
         &self.redo_stack
     }
+
+    /// Returns a reference to the next action to undo, without removing it from the stack.
+    ///
+    /// # Returns
+    ///
+    /// An `Option` containing a reference to the next history entry to undo, or `None` if there
+    /// are no actions to undo.
+    pub fn peek_undo(&self) -> Option<&HistoryEntry> {
+        self.undo_stack.last()
+    }
+    
+    /// Returns a reference to the next action to redo, without removing it from the stack.
+    ///
+    /// # Returns
+    ///
+    /// An `Option` containing a reference to the next history entry to redo, or `None` if there
+    /// are no actions to redo.
+    pub fn peek_redo(&self) -> Option<&HistoryEntry> {
+        self.redo_stack.last()
+    }
+    
+    /// Moves the top entry from the undo stack to the redo stack.
+    pub fn shift_to_redo(&mut self) {
+        if let Some(entry) = self.undo_stack.pop() {
+            self.redo_stack.push(entry);
+        }
+    }
+    
+    /// Moves the top entry from the redo stack to the undo stack.
+    pub fn shift_to_undo(&mut self) {
+        if let Some(entry) = self.redo_stack.pop() {
+            self.undo_stack.push(entry);
+        }
+    }
 }
 
 impl From<TimelineError> for HistoryError {

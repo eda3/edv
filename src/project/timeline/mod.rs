@@ -12,7 +12,9 @@ pub mod multi_track;
 use crate::utility::time::{Duration, TimePosition};
 
 // Export history types as well
-pub use history::{EditAction, EditHistory, HistoryEntry, HistoryError, TransactionGroup};
+pub use history::{
+    EditAction, EditHistory, HistoryEntry, HistoryError, TransactionGroup, UndoableAction,
+};
 
 /// Error types specific to timeline operations.
 #[derive(Debug, thiserror::Error)]
@@ -569,6 +571,100 @@ impl Timeline {
         Ok(())
     }
 
+    /// Adds a clip to a track and records the action in history.
+    ///
+    /// # Arguments
+    ///
+    /// * `track_id` - The ID of the track to add the clip to
+    /// * `clip` - The clip to add
+    ///
+    /// # Returns
+    ///
+    /// `Ok(())` if the clip was added successfully, or an error if the track
+    /// does not exist or the clip overlaps with an existing clip.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if:
+    /// * The track does not exist
+    /// * The clip overlaps with an existing clip in the track
+    pub fn add_clip_with_history(&mut self, track_id: TrackId, clip: Clip) -> Result<()> {
+        // クリップを複製
+        let clip_clone = clip.clone();
+
+        // クリップを追加
+        let result = self.add_clip(track_id, clip);
+
+        // 成功した場合のみ履歴に記録
+        if result.is_ok() {
+            let action = history::EditAction::AddClip {
+                track_id,
+                clip: clip_clone,
+            };
+            self.history.record(action);
+        }
+
+        result
+    }
+
+    /// Removes a clip from a track and records the action in history.
+    ///
+    /// # Arguments
+    ///
+    /// * `track_id` - The ID of the track to remove the clip from
+    /// * `clip_id` - The ID of the clip to remove
+    ///
+    /// # Returns
+    ///
+    /// `Ok(())` if the clip was removed successfully, or an error if the track
+    /// or clip does not exist.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if:
+    /// * The track does not exist
+    /// * The clip does not exist in the track
+    pub fn remove_clip_with_history(
+        &mut self,
+        track_id: TrackId,
+        clip_id: crate::project::ClipId,
+    ) -> Result<()> {
+        // First, get the clip and its position in the track
+        let clip_info = {
+            let track = self
+                .get_track(track_id)
+                .ok_or(TimelineError::TrackNotFound(track_id))?;
+
+            let clip_index = track
+                .get_clips()
+                .iter()
+                .position(|c| c.id() == clip_id)
+                .ok_or(TimelineError::ClipNotFound {
+                    track: track_id,
+                    clip: clip_id,
+                })?;
+
+            (track.get_clips()[clip_index].clone(), clip_index)
+        };
+
+        let (clip, clip_index) = clip_info;
+
+        // Remove the clip
+        let result = self.remove_clip(track_id, clip_id);
+
+        // Record the action in history if successful
+        if result.is_ok() {
+            let action = history::EditAction::RemoveClip {
+                track_id,
+                clip,
+                original_index: clip_index,
+            };
+            self.history.record(action);
+        }
+
+        result
+    }
+
     /// Removes a clip from a track.
     ///
     /// # Arguments
@@ -942,6 +1038,268 @@ impl Timeline {
         Ok(())
     }
 
+    /// Moves a clip to a different track and records the action in history.
+    ///
+    /// # Arguments
+    ///
+    /// * `source_track_id` - The ID of the track containing the clip
+    /// * `target_track_id` - The ID of the track to move the clip to
+    /// * `clip_id` - The ID of the clip to move
+    /// * `new_position` - The new position for the clip, or None to keep the current position
+    ///
+    /// # Returns
+    ///
+    /// `Ok(())` if the clip was moved successfully, or an error if the source track,
+    /// target track, or clip does not exist, or if the new position would cause overlap.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if:
+    /// * The source track does not exist
+    /// * The target track does not exist
+    /// * The clip does not exist in the source track
+    /// * The new position would cause the clip to overlap with existing clips
+    pub fn move_clip_to_track_with_history(
+        &mut self,
+        source_track_id: TrackId,
+        target_track_id: TrackId,
+        clip_id: crate::project::ClipId,
+        new_position: Option<TimePosition>,
+    ) -> Result<()> {
+        // First, get the clip and its position
+        let clip_info = {
+            let source_track = self
+                .get_track(source_track_id)
+                .ok_or(TimelineError::TrackNotFound(source_track_id))?;
+
+            let clip_index = source_track
+                .get_clips()
+                .iter()
+                .position(|c| c.id() == clip_id)
+                .ok_or(TimelineError::ClipNotFound {
+                    track: source_track_id,
+                    clip: clip_id,
+                })?;
+
+            let clip = source_track.get_clips()[clip_index].clone();
+            let original_position = clip.position();
+
+            (clip_index, original_position)
+        };
+
+        let (clip_index, original_position) = clip_info;
+
+        // Move the clip
+        let result =
+            self.move_clip_to_track(source_track_id, target_track_id, clip_id, new_position);
+
+        // Get the new position if the move was successful
+        if result.is_ok() {
+            let final_position = {
+                let target_track = self
+                    .get_track(target_track_id)
+                    .ok_or(TimelineError::TrackNotFound(target_track_id))?;
+
+                let moved_clip =
+                    target_track
+                        .get_clip(clip_id)
+                        .ok_or(TimelineError::ClipNotFound {
+                            track: target_track_id,
+                            clip: clip_id,
+                        })?;
+
+                moved_clip.position()
+            };
+
+            // Record the action in history
+            let action = history::EditAction::MoveClip {
+                clip_id,
+                original_track_id: source_track_id,
+                original_position,
+                original_index: clip_index,
+                new_track_id: target_track_id,
+                new_position: final_position,
+            };
+            self.history.record(action);
+        }
+
+        result
+    }
+
+    /// Gets a reference to the edit history.
+    #[must_use]
+    pub fn history(&self) -> &history::EditHistory {
+        &self.history
+    }
+
+    /// Gets a mutable reference to the edit history.
+    pub fn history_mut(&mut self) -> &mut history::EditHistory {
+        &mut self.history
+    }
+
+    /// Undoes the last edit action.
+    ///
+    /// # Returns
+    ///
+    /// `Ok(())` if the undo was successful, or an error if there is nothing to undo
+    /// or if the undo operation failed.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if:
+    /// * There is nothing to undo
+    /// * The undo operation failed
+    pub fn undo(&mut self) -> std::result::Result<(), history::HistoryError> {
+        // 履歴に元に戻せるアクションがあるか確認
+        if !self.history.can_undo() {
+            return Err(history::HistoryError::NothingToUndo);
+        }
+
+        // 借用の問題を回避するため、一旦historyをクローンして取り出す
+        let mut history_clone = self.history.clone();
+        let last_entry_opt = history_clone.peek_undo().cloned();
+
+        // 最後のエントリが取得できた場合、アクションを適用
+        if let Some(entry) = last_entry_opt {
+            // undo操作を実行
+            let result = match entry {
+                history::HistoryEntry::Single(action) => action.undo(self),
+                history::HistoryEntry::Group(group) => {
+                    // グループの場合は全アクションを逆順に適用
+                    for action in group.actions().iter().rev() {
+                        action.undo(self)?;
+                    }
+                    Ok(())
+                }
+            };
+
+            // 操作が成功した場合は、履歴スタックを更新
+            if result.is_ok() {
+                self.history.shift_to_redo();
+                Ok(())
+            } else {
+                // エラーを返す
+                Err(history::HistoryError::ApplyActionError(
+                    result.err().unwrap().to_string(),
+                ))
+            }
+        } else {
+            Err(history::HistoryError::NothingToUndo)
+        }
+    }
+
+    /// Redoes the last undone edit action.
+    ///
+    /// # Returns
+    ///
+    /// `Ok(())` if the redo was successful, or an error if there is nothing to redo
+    /// or if the redo operation failed.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if:
+    /// * There is nothing to redo
+    /// * The redo operation failed
+    pub fn redo(&mut self) -> std::result::Result<(), history::HistoryError> {
+        // 履歴にやり直せるアクションがあるか確認
+        if !self.history.can_redo() {
+            return Err(history::HistoryError::NothingToRedo);
+        }
+
+        // 借用の問題を回避するため、一旦historyをクローンして取り出す
+        let mut history_clone = self.history.clone();
+        let last_entry_opt = history_clone.peek_redo().cloned();
+
+        // 最後のエントリが取得できた場合、アクションを適用
+        if let Some(entry) = last_entry_opt {
+            // redo操作を実行
+            let result = match entry {
+                history::HistoryEntry::Single(action) => action.apply(self),
+                history::HistoryEntry::Group(group) => {
+                    // グループの場合は全アクションを順に適用
+                    for action in group.actions() {
+                        action.apply(self)?;
+                    }
+                    Ok(())
+                }
+            };
+
+            // 操作が成功した場合は、履歴スタックを更新
+            if result.is_ok() {
+                self.history.shift_to_undo();
+                Ok(())
+            } else {
+                // エラーを返す
+                Err(history::HistoryError::ApplyActionError(
+                    result.err().unwrap().to_string(),
+                ))
+            }
+        } else {
+            Err(history::HistoryError::NothingToRedo)
+        }
+    }
+
+    /// Checks if there are any actions that can be undone.
+    #[must_use]
+    pub fn can_undo(&self) -> bool {
+        self.history.can_undo()
+    }
+
+    /// Checks if there are any actions that can be redone.
+    #[must_use]
+    pub fn can_redo(&self) -> bool {
+        self.history.can_redo()
+    }
+
+    /// Begins a transaction for grouping multiple edit actions.
+    ///
+    /// # Arguments
+    ///
+    /// * `description` - An optional description for the transaction
+    ///
+    /// # Returns
+    ///
+    /// `Ok(())` if the transaction was started successfully, or an error if
+    /// a transaction is already in progress.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if a transaction is already in progress.
+    pub fn begin_transaction(
+        &mut self,
+        description: Option<String>,
+    ) -> std::result::Result<(), history::HistoryError> {
+        self.history.begin_transaction(description)
+    }
+
+    /// Commits the current transaction.
+    ///
+    /// # Returns
+    ///
+    /// `Ok(())` if the transaction was committed successfully, or an error if
+    /// no transaction is in progress.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if no transaction is in progress.
+    pub fn commit_transaction(&mut self) -> std::result::Result<(), history::HistoryError> {
+        self.history.commit_transaction()
+    }
+
+    /// Rolls back the current transaction.
+    ///
+    /// # Returns
+    ///
+    /// `Ok(())` if the transaction was rolled back successfully, or an error if
+    /// no transaction is in progress.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if no transaction is in progress.
+    pub fn rollback_transaction(&mut self) -> std::result::Result<(), history::HistoryError> {
+        self.history.rollback_transaction()
+    }
+
     /// Adds a keyframe to a track for a specific property.
     ///
     /// # Arguments
@@ -1007,20 +1365,26 @@ impl Timeline {
         value: f64,
         easing: keyframes::EasingFunction,
     ) -> Result<()> {
+        // プロパティ名をコピー
+        let property_string = property.to_string();
+
         // アクションを実行
-        self.add_keyframe(track_id, property, time, value, easing)?;
+        let result = self.add_keyframe(track_id, property, time, value, easing);
 
-        // 履歴に記録
-        let action = history::EditAction::AddKeyframe {
-            track_id,
-            property: property.to_string(),
-            time,
-            value,
-            easing,
-        };
+        // 成功した場合のみ履歴に記録
+        if result.is_ok() {
+            let action = history::EditAction::AddKeyframe {
+                track_id,
+                property: property_string,
+                time,
+                value,
+                easing,
+            };
 
-        self.history.record(action);
-        Ok(())
+            self.history.record(action);
+        }
+
+        result
     }
 
     /// Gets the animated property value at a specific time.
@@ -1117,28 +1481,33 @@ impl Timeline {
         time: crate::utility::time::TimePosition,
     ) -> Result<()> {
         // 削除前にキーフレームの情報を保存
-        let value_and_easing = self
-            .get_track(track_id)
-            .and_then(|track| track.keyframes())
-            .and_then(|keyframes| keyframes.get_track(property))
-            .and_then(|track| track.keyframes().iter().find(|kf| kf.time() == time))
-            .map(|kf| (kf.value(), kf.easing()));
+        let property_string = property.to_string();
+        let value_and_easing = {
+            self.get_track(track_id)
+                .and_then(|track| track.keyframes())
+                .and_then(|keyframes| keyframes.get_track(property))
+                .and_then(|track| track.keyframes().iter().find(|kf| kf.time() == time))
+                .map(|kf| (kf.value(), kf.easing()))
+        };
 
         if let Some((value, easing)) = value_and_easing {
             // アクションを実行
-            self.remove_keyframe(track_id, property, time)?;
+            let result = self.remove_keyframe(track_id, property, time);
 
-            // 履歴に記録
-            let action = history::EditAction::RemoveKeyframe {
-                track_id,
-                property: property.to_string(),
-                time,
-                value,
-                easing,
-            };
+            // 成功した場合のみ履歴に記録
+            if result.is_ok() {
+                let action = history::EditAction::RemoveKeyframe {
+                    track_id,
+                    property: property_string,
+                    time,
+                    value,
+                    easing,
+                };
 
-            self.history.record(action);
-            Ok(())
+                self.history.record(action);
+            }
+
+            result
         } else {
             Err(TimelineError::InvalidOperation(
                 "キーフレームが見つかりません".to_string(),
@@ -1173,32 +1542,43 @@ impl Timeline {
         new_value: f64,
         new_easing: keyframes::EasingFunction,
     ) -> Result<()> {
+        // プロパティ名をコピー
+        let property_string = property.to_string();
+
         // 更新前の値を取得
-        let original_value_and_easing = self
-            .get_track(track_id)
-            .and_then(|track| track.keyframes())
-            .and_then(|keyframes| keyframes.get_track(property))
-            .and_then(|track| track.keyframes().iter().find(|kf| kf.time() == time))
-            .map(|kf| (kf.value(), kf.easing()));
+        let original_value_and_easing = {
+            self.get_track(track_id)
+                .and_then(|track| track.keyframes())
+                .and_then(|keyframes| keyframes.get_track(property))
+                .and_then(|track| track.keyframes().iter().find(|kf| kf.time() == time))
+                .map(|kf| (kf.value(), kf.easing()))
+        };
 
         if let Some((original_value, original_easing)) = original_value_and_easing {
             // キーフレームを削除して新しい値で追加
-            self.remove_keyframe(track_id, property, time)?;
-            self.add_keyframe(track_id, property, time, new_value, new_easing)?;
-
-            // 履歴に記録
-            let action = history::EditAction::UpdateKeyframe {
-                track_id,
-                property: property.to_string(),
-                time,
-                original_value,
-                new_value,
-                original_easing,
-                new_easing,
+            let result = {
+                self.remove_keyframe(track_id, property, time)
+                    .and_then(|_| {
+                        self.add_keyframe(track_id, property, time, new_value, new_easing)
+                    })
             };
 
-            self.history.record(action);
-            Ok(())
+            // 成功した場合のみ履歴に記録
+            if result.is_ok() {
+                let action = history::EditAction::UpdateKeyframe {
+                    track_id,
+                    property: property_string,
+                    time,
+                    original_value,
+                    new_value,
+                    original_easing,
+                    new_easing,
+                };
+
+                self.history.record(action);
+            }
+
+            result
         } else {
             Err(TimelineError::InvalidOperation(
                 "キーフレームが見つかりません".to_string(),
