@@ -1,24 +1,24 @@
-/// キーフレームアニメーション付きマルチトラック編集のサンプルプロジェクト
+/// Multi-track Editing Sample Project with Keyframe Animations
 ///
-/// このサンプルでは、複数のビデオトラックとオーディオトラックを含むプロジェクトを作成し、
-/// キーフレームアニメーションを使って不透明度や位置を時間とともに変化させます。
+/// This sample demonstrates creating a project with multiple video and audio tracks,
+/// and using keyframe animations to change opacity and position over time.
 ///
-/// # 実行方法
+/// # How to Run
 ///
 /// ```bash
-/// # WSL環境で実行する場合は、TMPDIR環境変数を設定してから実行してください
-/// # まず、一時ディレクトリを作成
+/// # When running in a WSL environment, set the TMPDIR environment variable
+/// # First, create a temporary directory
 /// mkdir -p output/temp
 /// chmod -R 1777 output
 ///
-/// # 次に、環境変数を設定して実行
+/// # Then, run with the environment variable set
 /// TMPDIR=$(pwd)/output/temp cargo run --example multi_track_keyframe_demo
 /// ```
 ///
 /// # TODO
 ///
-/// * WSL環境で実行時の一時ディレクトリ作成の問題を修正する
-/// * より柔軟なメディアファイルパスの指定方法を導入する
+/// * Fix temporary directory creation issues in WSL environment
+/// * Implement more flexible media file path specification
 use std::path::{Path, PathBuf};
 
 use edv::ffmpeg::FFmpeg;
@@ -29,41 +29,41 @@ use edv::project::{AssetId, AssetMetadata, AssetReference, ClipId, Project};
 use edv::utility::time::{Duration, TimePosition};
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
-    // FFmpegを初期化
+    // Initialize FFmpeg
     let ffmpeg = FFmpeg::detect()?;
     println!("FFmpeg detected: {}", ffmpeg.path().display());
     println!("FFmpeg version: {}", ffmpeg.version());
 
-    // 出力ディレクトリを作成
+    // Create output directory
     let output_dir = PathBuf::from("output");
     std::fs::create_dir_all(&output_dir)?;
 
-    // プロジェクトを作成
-    let mut project = Project::new("キーフレームマルチトラックサンプル");
+    // Create a project
+    let mut project = Project::new("Keyframe Multi-track Sample");
 
-    // 入力ファイルのパスを設定
+    // Set input file path
     let input_file = PathBuf::from("test_media/sozai.mp4");
     if !input_file.exists() {
         return Err(format!("Input file not found: {}", input_file.display()).into());
     }
 
-    // 入力ファイルのメディア情報を取得
+    // Get media information from input file
     let media_info = ffmpeg.get_media_info(&input_file)?;
 
-    // メディア情報から基本データを取得
+    // Get basic data from media info
     let main_video_duration = media_info.duration_seconds().unwrap_or(10.0);
 
-    // メディア情報からビデオ解像度を取得
+    // Get video resolution from media info
     let video_dimensions = if let Some(video_stream) = media_info.video_streams().first() {
         (
             video_stream.width.unwrap_or(1280) as u32,
             video_stream.height.unwrap_or(720) as u32,
         )
     } else {
-        (1280, 720) // デフォルト値
+        (1280, 720) // Default values
     };
 
-    // アセットメタデータを作成
+    // Create asset metadata
     let mut asset_metadata = AssetMetadata {
         duration: Some(Duration::from_seconds(main_video_duration)),
         dimensions: Some(video_dimensions),
@@ -71,34 +71,34 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         extra: std::collections::HashMap::new(),
     };
 
-    // アセットを追加
+    // Add asset
     let asset_id = project.add_asset(input_file.clone(), asset_metadata.clone());
 
-    // 2つ目のアセットとして同じファイルを追加 (実際のプロジェクトでは異なるファイルを使用することが多い)
+    // Add the same file as a second asset (in real projects, different files would typically be used)
     asset_metadata
         .extra
         .insert("purpose".to_string(), "overlay".to_string());
     let overlay_asset_id = project.add_asset(input_file.clone(), asset_metadata);
 
-    // タイムラインにトラックを追加
+    // Add tracks to timeline
     let main_video_track_id = project.timeline.add_track(TrackKind::Video);
     let overlay_video_track_id = project.timeline.add_track(TrackKind::Video);
     let audio_track_id = project.timeline.add_track(TrackKind::Audio);
 
-    // トラック名を設定
+    // Set track names
     if let Some(track) = project.timeline.get_track_mut(main_video_track_id) {
-        track.set_name("メインビデオ");
+        track.set_name("Main Video");
     }
 
     if let Some(track) = project.timeline.get_track_mut(overlay_video_track_id) {
-        track.set_name("キーフレームアニメーション付きオーバーレイ");
+        track.set_name("Overlay with Keyframe Animation");
     }
 
     if let Some(track) = project.timeline.get_track_mut(audio_track_id) {
-        track.set_name("オーディオ");
+        track.set_name("Audio");
     }
 
-    // クリップを作成してメインビデオトラックに追加
+    // Create clip and add to main video track
     let main_clip = Clip::new(
         ClipId::new(),
         asset_id,
@@ -110,24 +110,24 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     project.timeline.add_clip(main_video_track_id, main_clip)?;
 
-    // オーバーレイビデオクリップを作成（5秒間表示）
+    // Create overlay video clip (display for 5 seconds)
     let overlay_clip = Clip::new(
         ClipId::new(),
         overlay_asset_id,
-        TimePosition::from_seconds(1.0), // 1秒後から開始
-        Duration::from_seconds(5.0),     // 5秒間表示
-        TimePosition::from_seconds(0.0), // 元動画の最初から
-        TimePosition::from_seconds(5.0), // 元動画の5秒目まで
+        TimePosition::from_seconds(1.0), // Start after 1 second
+        Duration::from_seconds(5.0),     // Display for 5 seconds
+        TimePosition::from_seconds(0.0), // From the beginning of the original video
+        TimePosition::from_seconds(5.0), // To 5 seconds in the original video
     );
 
     project
         .timeline
         .add_clip(overlay_video_track_id, overlay_clip)?;
 
-    // オーディオクリップを追加（元の動画のオーディオとして）
+    // Add audio clip (using the audio from the original video)
     let audio_clip = Clip::new(
         ClipId::new(),
-        asset_id, // 同じアセットのオーディオを使用
+        asset_id, // Use audio from the same asset
         TimePosition::from_seconds(0.0),
         Duration::from_seconds(main_video_duration),
         TimePosition::from_seconds(0.0),
@@ -136,82 +136,82 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     project.timeline.add_clip(audio_track_id, audio_clip)?;
 
-    // オーバーレイのキーフレームアニメーションを追加
+    // Add keyframe animations to the overlay
 
-    // 不透明度のキーフレームアニメーション
-    // 開始時: 0% (不可視) -> 1秒後: 100% (完全に表示) -> 4秒後: 100% -> 5秒後: 0% (フェードアウト)
+    // Opacity keyframe animation
+    // Start: 0% (invisible) -> After 1 second: 100% (fully visible) -> After 4 seconds: 100% -> After 5 seconds: 0% (fade out)
     project.timeline.add_keyframe_with_history(
         overlay_video_track_id,
         "opacity",
-        TimePosition::from_seconds(1.0), // 開始時点
-        0.0,                             // 開始時の不透明度 (0%)
+        TimePosition::from_seconds(1.0), // Starting point
+        0.0,                             // Starting opacity (0%)
         EasingFunction::Linear,
     )?;
 
     project.timeline.add_keyframe_with_history(
         overlay_video_track_id,
         "opacity",
-        TimePosition::from_seconds(2.0), // 1秒後
-        1.0,                             // 不透明度 100%
+        TimePosition::from_seconds(2.0), // After 1 second
+        1.0,                             // Opacity 100%
         EasingFunction::EaseOut,
     )?;
 
     project.timeline.add_keyframe_with_history(
         overlay_video_track_id,
         "opacity",
-        TimePosition::from_seconds(5.0), // 4秒後
-        1.0,                             // 不透明度 100%
+        TimePosition::from_seconds(5.0), // After 4 seconds
+        1.0,                             // Opacity 100%
         EasingFunction::EaseIn,
     )?;
 
     project.timeline.add_keyframe_with_history(
         overlay_video_track_id,
         "opacity",
-        TimePosition::from_seconds(6.0), // 5秒後
-        0.0,                             // 不透明度 0%
+        TimePosition::from_seconds(6.0), // After 5 seconds
+        0.0,                             // Opacity 0%
         EasingFunction::Linear,
     )?;
 
-    // スケールのキーフレームアニメーション（サイズの変化）
-    // 開始時: 0.5 (50%サイズ) -> 5秒後: 1.0 (100%サイズ)
+    // Scale keyframe animation (size change)
+    // Start: 0.5 (50% size) -> After 5 seconds: 1.0 (100% size)
     project.timeline.add_keyframe_with_history(
         overlay_video_track_id,
         "scale",
-        TimePosition::from_seconds(1.0), // 開始時点
-        0.5,                             // 開始時のスケール (50%)
+        TimePosition::from_seconds(1.0), // Starting point
+        0.5,                             // Starting scale (50%)
         EasingFunction::Linear,
     )?;
 
     project.timeline.add_keyframe_with_history(
         overlay_video_track_id,
         "scale",
-        TimePosition::from_seconds(6.0), // 5秒後
-        1.0,                             // スケール 100%
+        TimePosition::from_seconds(6.0), // After 5 seconds
+        1.0,                             // Scale 100%
         EasingFunction::EaseOut,
     )?;
 
-    // 位置のキーフレームアニメーション（X座標の変化）
-    // 開始時: -0.3 (左寄り) -> 5秒後: 0.3 (右寄り)
+    // Position keyframe animation (X-coordinate change)
+    // Start: -0.3 (left-leaning) -> After 5 seconds: 0.3 (right-leaning)
     project.timeline.add_keyframe_with_history(
         overlay_video_track_id,
         "position_x",
-        TimePosition::from_seconds(1.0), // 開始時点
-        -0.3,                            // 開始時のX位置 (左寄り)
+        TimePosition::from_seconds(1.0), // Starting point
+        -0.3,                            // Starting X position (left-leaning)
         EasingFunction::EaseInOut,
     )?;
 
     project.timeline.add_keyframe_with_history(
         overlay_video_track_id,
         "position_x",
-        TimePosition::from_seconds(6.0), // 5秒後
-        0.3,                             // X位置 (右寄り)
+        TimePosition::from_seconds(6.0), // After 5 seconds
+        0.3,                             // X position (right-leaning)
         EasingFunction::EaseInOut,
     )?;
 
-    // 出力ファイルのパスを設定
+    // Set output file path
     let output_path = output_dir.join("keyframe_animation_output.mp4");
 
-    // レンダリング設定を作成
+    // Create render config
     let render_config = RenderConfig::new(output_path.clone())
         .with_resolution(1280, 720)
         .with_frame_rate(30.0)
@@ -221,7 +221,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     println!("Rendering project to: {}", output_path.display());
 
-    // プロジェクトをレンダリング
+    // Render the project
     let result = project.render_with_config(render_config)?;
 
     println!("Rendering completed successfully!");
