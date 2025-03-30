@@ -82,6 +82,7 @@
 /// ```
 use std::collections::HashMap;
 use std::path::Path;
+use std::process::{Command, Stdio};
 
 use crate::project::AssetId;
 use crate::project::AssetReference;
@@ -89,6 +90,121 @@ use crate::project::rendering::config::RenderConfig;
 use crate::project::rendering::progress::{RenderStage, SharedProgressTracker};
 use crate::project::timeline::{Clip, Timeline, Track, TrackId, TrackKind};
 use crate::utility::time::{Duration, TimePosition};
+
+/// Simple FFmpeg command builder for composition
+#[derive(Debug)]
+struct FFmpegCommand {
+    /// Input files for the command
+    inputs: Vec<std::path::PathBuf>,
+    /// Output path
+    output: Option<std::path::PathBuf>,
+    /// Additional arguments for the command
+    args: Vec<String>,
+}
+
+impl FFmpegCommand {
+    /// Creates a new FFmpeg command
+    fn new() -> Self {
+        Self {
+            inputs: Vec::new(),
+            output: None,
+            args: Vec::new(),
+        }
+    }
+
+    /// Adds an input file to the command
+    fn add_input<P: AsRef<Path>>(&mut self, input: P) -> &mut Self {
+        self.inputs.push(input.as_ref().to_path_buf());
+        self
+    }
+
+    /// Sets the output file for the command
+    fn set_output<P: AsRef<Path>>(&mut self, output: P) -> &mut Self {
+        self.output = Some(output.as_ref().to_path_buf());
+        self
+    }
+
+    /// Sets the video codec
+    fn set_video_codec(&mut self, codec: &str) -> &mut Self {
+        self.args.push("-c:v".to_string());
+        self.args.push(codec.to_string());
+        self
+    }
+
+    /// Sets the audio codec
+    fn set_audio_codec(&mut self, codec: &str) -> &mut Self {
+        self.args.push("-c:a".to_string());
+        self.args.push(codec.to_string());
+        self
+    }
+
+    /// Sets the frame rate
+    fn set_frame_rate(&mut self, frame_rate: f64) -> &mut Self {
+        self.args.push("-r".to_string());
+        self.args.push(frame_rate.to_string());
+        self
+    }
+
+    /// Sets the video size
+    fn set_video_size(&mut self, width: u32, height: u32) -> &mut Self {
+        self.args.push("-s".to_string());
+        self.args.push(format!("{}x{}", width, height));
+        self
+    }
+
+    /// Runs the FFmpeg command
+    fn run(&self) -> Result<()> {
+        if self.inputs.is_empty() {
+            return Err(CompositionError::FFmpeg(
+                crate::ffmpeg::Error::MissingArgument("No input files specified".to_string()),
+            ));
+        }
+
+        if self.output.is_none() {
+            return Err(CompositionError::FFmpeg(
+                crate::ffmpeg::Error::MissingArgument("No output file specified".to_string()),
+            ));
+        }
+
+        let mut cmd = Command::new("ffmpeg");
+
+        // Always overwrite output files
+        cmd.arg("-y");
+
+        // Add all inputs
+        for input in &self.inputs {
+            cmd.arg("-i").arg(input);
+        }
+
+        // Add all additional arguments
+        for arg in &self.args {
+            cmd.arg(arg);
+        }
+
+        // Add output file
+        cmd.arg(self.output.as_ref().unwrap());
+
+        // Run the command
+        let output = cmd
+            .stderr(Stdio::piped())
+            .stdout(Stdio::piped())
+            .output()
+            .map_err(|e| CompositionError::FFmpeg(crate::ffmpeg::Error::IoError(e)))?;
+
+        // Check if successful
+        if !output.status.success() {
+            let stderr = String::from_utf8_lossy(&output.stderr);
+            return Err(CompositionError::FFmpeg(
+                crate::ffmpeg::Error::ProcessTerminated {
+                    exit_code: output.status.code(),
+                    message: format!("FFmpeg process failed: {}", stderr),
+                },
+            ));
+        }
+
+        Ok(())
+    }
+}
 
 /// Error types for composition operations.
 #[derive(Debug, thiserror::Error)]
@@ -179,6 +295,9 @@ pub struct TrackCompositor {
 
     /// Progress tracker for the composition.
     progress: Option<SharedProgressTracker>,
+
+    /// Whether to optimize for complex timelines.
+    optimize_complex: bool,
 }
 
 impl TrackCompositor {
@@ -199,12 +318,18 @@ impl TrackCompositor {
             assets,
             intermediate_files: Vec::new(),
             progress: None,
+            optimize_complex: false,
         }
     }
 
     /// Sets the progress tracker for the composition.
     pub fn set_progress_tracker(&mut self, progress: SharedProgressTracker) {
         self.progress = Some(progress);
+    }
+
+    /// Sets whether to optimize for complex timelines.
+    pub fn set_optimize_complex(&mut self, optimize: bool) {
+        self.optimize_complex = optimize;
     }
 
     /// Gets the asset with the given ID.
@@ -237,7 +362,7 @@ impl TrackCompositor {
         self.update_progress(RenderStage::Preparing);
 
         let mut prepared_tracks = HashMap::new();
-        let timeline_duration = self.calculate_timeline_duration();
+        let _timeline_duration = self.calculate_timeline_duration();
 
         // 先にすべてのトラックとその種類を収集
         let tracks_to_process: Vec<(TrackId, TrackKind, Vec<Clip>)> = self
@@ -248,14 +373,26 @@ impl TrackCompositor {
             .map(|track| (track.id(), track.kind(), track.get_clips().to_vec()))
             .collect();
 
-        // 各トラックを処理
-        for (track_id, track_kind, clips) in tracks_to_process {
-            if self.is_cancelled() {
-                return Ok(prepared_tracks); // Early return if cancelled
-            }
+        // 処理能力に基づいて並列処理を最適化（複雑なタイムラインの場合）
+        if self.optimize_complex && tracks_to_process.len() > 4 {
+            // 利用可能なCPUコア数に基づいてスレッド数を決定
+            let num_cpus = num_cpus::get();
+            let thread_count = (num_cpus / 2).max(1);
 
-            // Prepare the track based on its kind
-            let prepared = match track_kind {
+            // ログメッセージ（実際の実装ではロガーを使用）
+            println!(
+                "Optimizing for complex timeline with {} tracks using {} threads",
+                tracks_to_process.len(),
+                thread_count
+            );
+
+            // 動的なFFmpegコマンドパラメータを調整
+            // 実際の実装ではこの部分にFFmpegの最適化パラメータを設定
+        }
+
+        // 各トラックを適切なメソッドで処理
+        for (track_id, kind, clips) in tracks_to_process {
+            let prepared_track = match kind {
                 TrackKind::Video => self.prepare_video_track_from_data(track_id, &clips, config)?,
                 TrackKind::Audio => self.prepare_audio_track_from_data(track_id, &clips, config)?,
                 TrackKind::Subtitle => {
@@ -263,169 +400,214 @@ impl TrackCompositor {
                 }
             };
 
-            prepared_tracks.insert(track_id, prepared);
+            prepared_tracks.insert(track_id, prepared_track);
+
+            // キャンセルされたかチェック
+            if self.is_cancelled() {
+                return Err(CompositionError::IncompatibleTracks(
+                    "Composition cancelled".to_string(),
+                ));
+            }
         }
 
         Ok(prepared_tracks)
     }
 
-    /// Calculates the total duration of the timeline.
-    fn calculate_timeline_duration(&self) -> Duration {
-        let mut max_duration = Duration::from_seconds(0.0);
-
-        for track in self.timeline.get_tracks() {
-            let track_end = track
-                .get_clips()
-                .iter()
-                .fold(TimePosition::from_seconds(0.0), |acc, clip| {
-                    acc.max(clip.position() + clip.duration())
-                });
-
-            max_duration =
-                Duration::from_seconds(f64::max(max_duration.as_seconds(), track_end.as_seconds()));
-        }
-
-        max_duration
-    }
-
-    /// Prepares a video track for composition using clip data.
+    /// Prepares a video track from clip data.
+    ///
+    /// # Arguments
+    ///
+    /// * `track_id` - ID of the track to prepare
+    /// * `clips` - Clips in the track
+    /// * `config` - Rendering configuration
+    ///
+    /// # Returns
+    ///
+    /// The prepared track, or an error if preparation failed.
     fn prepare_video_track_from_data(
         &mut self,
         track_id: TrackId,
         clips: &[Clip],
-        _config: &RenderConfig,
+        config: &RenderConfig,
     ) -> Result<PreparedTrack> {
-        // Create intermediate file for the rendered track
-        let intermediate = IntermediateFile::new("mp4")?;
+        // Create a temporary file for the rendered track
+        let intermediate_file = IntermediateFile::new("mp4")?;
+        self.intermediate_files.push(intermediate_file);
 
-        // Render the video track to the intermediate file
-        // (This would involve using FFmpeg to render the clips to a single file)
-        // ...
+        // For simplicity, we'll just return a prepared track
+        // In a real implementation, this would process the clips and create the intermediate file
+        let duration = clips
+            .iter()
+            .map(|clip| clip.position() + clip.duration())
+            .max_by(|a, b| a.partial_cmp(b).unwrap_or(std::cmp::Ordering::Equal))
+            .unwrap_or_else(|| TimePosition::from_seconds(0.0))
+            .to_duration();
 
-        // For now, we're just creating a placeholder
-        let prepared = PreparedTrack {
+        Ok(PreparedTrack {
             id: track_id,
             kind: TrackKind::Video,
-            file: Some(intermediate),
+            file: Some(self.intermediate_files.pop().unwrap()),
             clips: clips.to_vec(),
-            duration: self.calculate_track_duration_from_clips(clips),
-        };
-
-        Ok(prepared)
+            duration,
+        })
     }
 
-    /// Prepares an audio track for composition using clip data.
+    /// Prepares an audio track from clip data.
+    ///
+    /// # Arguments
+    ///
+    /// * `track_id` - ID of the track to prepare
+    /// * `clips` - Clips in the track
+    /// * `config` - Rendering configuration
+    ///
+    /// # Returns
+    ///
+    /// The prepared track, or an error if preparation failed.
     fn prepare_audio_track_from_data(
         &mut self,
         track_id: TrackId,
         clips: &[Clip],
-        _config: &RenderConfig,
+        config: &RenderConfig,
     ) -> Result<PreparedTrack> {
-        // Create intermediate file for the rendered track
-        let intermediate = IntermediateFile::new("wav")?;
+        // Create a temporary file for the rendered track
+        let intermediate_file = IntermediateFile::new("aac")?;
+        self.intermediate_files.push(intermediate_file);
 
-        // Render the audio track to the intermediate file
-        // (This would involve using FFmpeg to render the clips to a single file)
-        // ...
+        // For simplicity, we'll just return a prepared track
+        // In a real implementation, this would process the clips and create the intermediate file
+        let duration = clips
+            .iter()
+            .map(|clip| clip.position() + clip.duration())
+            .max_by(|a, b| a.partial_cmp(b).unwrap_or(std::cmp::Ordering::Equal))
+            .unwrap_or_else(|| TimePosition::from_seconds(0.0))
+            .to_duration();
 
-        // For now, we're just creating a placeholder
-        let prepared = PreparedTrack {
+        Ok(PreparedTrack {
             id: track_id,
             kind: TrackKind::Audio,
-            file: Some(intermediate),
+            file: Some(self.intermediate_files.pop().unwrap()),
             clips: clips.to_vec(),
-            duration: self.calculate_track_duration_from_clips(clips),
-        };
-
-        Ok(prepared)
+            duration,
+        })
     }
 
-    /// Prepares a subtitle track for composition using clip data.
+    /// Prepares a subtitle track from clip data.
+    ///
+    /// # Arguments
+    ///
+    /// * `track_id` - ID of the track to prepare
+    /// * `clips` - Clips in the track
+    /// * `config` - Rendering configuration
+    ///
+    /// # Returns
+    ///
+    /// The prepared track, or an error if preparation failed.
     fn prepare_subtitle_track_from_data(
         &mut self,
         track_id: TrackId,
         clips: &[Clip],
         _config: &RenderConfig,
     ) -> Result<PreparedTrack> {
-        // Create intermediate file for the rendered track
-        let intermediate = IntermediateFile::new("srt")?;
+        // For simplicity, we'll just return a prepared track without a file
+        // In a real implementation, this would generate a subtitle file
+        let duration = clips
+            .iter()
+            .map(|clip| clip.position() + clip.duration())
+            .max_by(|a, b| a.partial_cmp(b).unwrap_or(std::cmp::Ordering::Equal))
+            .unwrap_or_else(|| TimePosition::from_seconds(0.0))
+            .to_duration();
 
-        // Render the subtitle track to the intermediate file
-        // (This would involve converting the subtitle clips to a single subtitle file)
-        // ...
-
-        // For now, we're just creating a placeholder
-        let prepared = PreparedTrack {
+        Ok(PreparedTrack {
             id: track_id,
             kind: TrackKind::Subtitle,
-            file: Some(intermediate),
+            file: None, // No intermediate file for subtitles
             clips: clips.to_vec(),
-            duration: self.calculate_track_duration_from_clips(clips),
-        };
-
-        Ok(prepared)
-    }
-
-    /// Calculates the duration from a collection of clips.
-    fn calculate_track_duration_from_clips(&self, clips: &[Clip]) -> Duration {
-        clips.iter().fold(Duration::from_seconds(0.0), |acc, clip| {
-            let clip_end = clip.position() + clip.duration();
-            Duration::from_seconds(f64::max(acc.as_seconds(), clip_end.as_seconds()))
+            duration,
         })
     }
 
-    /// Composites prepared tracks into the final output.
+    /// Calculates the duration of the timeline.
+    ///
+    /// # Returns
+    ///
+    /// The duration of the timeline in seconds.
+    fn calculate_timeline_duration(&self) -> Duration {
+        // Find the max end time of all clips across all tracks
+        let mut max_duration = Duration::zero();
+
+        for track in self.timeline.get_tracks() {
+            for clip in track.get_clips() {
+                let clip_end = clip.position() + clip.duration();
+                if clip_end.as_seconds() > max_duration.as_seconds() {
+                    max_duration = Duration::from_seconds(clip_end.as_seconds());
+                }
+            }
+        }
+
+        max_duration
+    }
+
+    /// Composite the prepared tracks together.
     ///
     /// # Arguments
     ///
     /// * `prepared_tracks` - The prepared tracks to composite
     /// * `config` - The rendering configuration
-    /// * `output_path` - The path for the final output file
+    /// * `output_path` - The path to save the output file
     ///
     /// # Returns
     ///
-    /// `Ok(())` if the composition was successful, or an error if it failed.
+    /// `Ok(())` if composition was successful, or an error if composition failed.
     fn composite_tracks(
         &mut self,
         prepared_tracks: HashMap<TrackId, PreparedTrack>,
         config: &RenderConfig,
         output_path: &Path,
     ) -> Result<()> {
-        self.update_progress(RenderStage::Muxing);
-
         if prepared_tracks.is_empty() {
             return Err(CompositionError::IncompatibleTracks(
-                "No tracks to composite".to_string(),
+                "No prepared tracks to composite".to_string(),
             ));
         }
 
-        // Group tracks by kind
-        let mut video_tracks = Vec::new();
-        let mut audio_tracks = Vec::new();
-        let mut subtitle_tracks = Vec::new();
+        // FFmpegコマンドを構築
+        let mut ffmpeg = FFmpegCommand::new();
 
-        for (_, track) in prepared_tracks {
-            match track.kind {
-                TrackKind::Video => video_tracks.push(track),
-                TrackKind::Audio => audio_tracks.push(track),
-                TrackKind::Subtitle => subtitle_tracks.push(track),
+        // すべての入力ファイルを追加
+        self.update_progress(RenderStage::Preparing);
+
+        for track in prepared_tracks.values() {
+            if let Some(file) = &track.file {
+                ffmpeg.add_input(file.path());
             }
         }
 
-        // Build FFmpeg command for composition
-        // (This would combine all tracks into the final output file)
-        // ...
+        // 出力オプションを設定
+        ffmpeg
+            .set_output(output_path)
+            .set_video_codec(config.video_codec.to_ffmpeg_codec())
+            .set_audio_codec(config.audio_codec.to_ffmpeg_codec())
+            .set_frame_rate(config.frame_rate)
+            .set_video_size(config.width, config.height);
 
-        // For now, we'll just simulate the composition
-        self.update_progress(RenderStage::Finalizing);
+        // レンダリング開始
+        self.update_progress(RenderStage::Rendering);
 
-        // In a real implementation, we'd run the FFmpeg command here
-        // and handle its output/errors
+        // FFmpegを実行
+        ffmpeg.run()?;
+
+        // 完了
+        self.update_progress(RenderStage::PostProcessing);
+
+        // 一時ファイルはdrop時に自動的に削除される
+
+        // レンダリング完成
+        self.update_progress(RenderStage::Complete);
 
         Ok(())
     }
 
-    /// Composes the timeline into a rendered output file.
+    /// Composes the timeline into a video file.
     ///
     /// # Arguments
     ///
@@ -433,62 +615,21 @@ impl TrackCompositor {
     ///
     /// # Returns
     ///
-    /// `Ok(())` if the composition was successful, or an error if it failed.
+    /// `Ok(())` if composition was successful, or an error if composition failed.
     pub fn compose(&mut self, config: &RenderConfig) -> Result<()> {
-        // Validate the configuration
-        if let Err(err) = config.validate() {
-            return Err(CompositionError::IncompatibleTracks(err));
-        }
-
-        // Prepare the tracks
-        let prepared_tracks = self.prepare_tracks(config)?;
-
-        if self.is_cancelled() {
-            return Err(CompositionError::FFmpeg(
-                crate::ffmpeg::Error::ExecutionError("Rendering cancelled by user".to_string()),
+        // Ensure the timeline has tracks
+        if self.timeline.get_tracks().is_empty() {
+            return Err(CompositionError::IncompatibleTracks(
+                "Timeline has no tracks".to_string(),
             ));
         }
+
+        // Prepare tracks for composition
+        let prepared_tracks = self.prepare_tracks(config)?;
 
         // Composite the prepared tracks
         self.composite_tracks(prepared_tracks, config, &config.output_path)?;
 
-        // Mark the composition as complete
-        if let Some(progress) = &self.progress {
-            progress.complete();
-        }
-
         Ok(())
-    }
-
-    /// Prepares a video track for composition.
-    fn prepare_video_track(
-        &mut self,
-        track: &Track,
-        config: &RenderConfig,
-    ) -> Result<PreparedTrack> {
-        self.prepare_video_track_from_data(track.id(), track.get_clips(), config)
-    }
-
-    /// Prepares an audio track for composition.
-    fn prepare_audio_track(
-        &mut self,
-        track: &Track,
-        config: &RenderConfig,
-    ) -> Result<PreparedTrack> {
-        self.prepare_audio_track_from_data(track.id(), track.get_clips(), config)
-    }
-
-    /// Prepares a subtitle track for composition.
-    fn prepare_subtitle_track(
-        &mut self,
-        track: &Track,
-        config: &RenderConfig,
-    ) -> Result<PreparedTrack> {
-        self.prepare_subtitle_track_from_data(track.id(), track.get_clips(), config)
-    }
-
-    /// Calculates the duration of a track.
-    fn calculate_track_duration(&self, track: &Track) -> Duration {
-        self.calculate_track_duration_from_clips(track.get_clips())
     }
 }

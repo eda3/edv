@@ -226,6 +226,16 @@ impl TimePosition {
         }
     }
 
+    /// Converts the time position to a Duration.
+    ///
+    /// # Returns
+    ///
+    /// A new Duration with the same number of seconds.
+    #[must_use]
+    pub fn to_duration(&self) -> Duration {
+        Duration::from_seconds(self.seconds)
+    }
+
     /// Creates a new time position from milliseconds.
     ///
     /// # Arguments

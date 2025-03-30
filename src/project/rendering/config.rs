@@ -3,10 +3,11 @@
 /// This module defines the configuration options for rendering a timeline
 /// to a video file, including format selection, codec options, and quality settings.
 use crate::utility::time::TimePosition;
+use std::hash::{Hash, Hasher};
 use std::path::PathBuf;
 
 /// Video codec options for rendering.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum VideoCodec {
     /// H.264 codec (default).
     H264,
@@ -41,7 +42,7 @@ impl VideoCodec {
 }
 
 /// Audio codec options for rendering.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum AudioCodec {
     /// AAC codec (default).
     AAC,
@@ -76,7 +77,7 @@ impl AudioCodec {
 }
 
 /// Output format options for rendering.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum OutputFormat {
     /// MP4 container format (default).
     MP4,
@@ -86,6 +87,8 @@ pub enum OutputFormat {
     MOV,
     /// MKV container format.
     MKV,
+    /// GIF format (video only, no audio).
+    GIF,
 }
 
 impl Default for OutputFormat {
@@ -103,6 +106,7 @@ impl OutputFormat {
             Self::WebM => "webm",
             Self::MOV => "mov",
             Self::MKV => "mkv",
+            Self::GIF => "gif",
         }
     }
 }
@@ -148,6 +152,21 @@ pub struct RenderConfig {
 
     /// Whether to include subtitles in the output.
     pub include_subtitles: bool,
+
+    /// Whether to use cached assets when available.
+    pub use_cache: bool,
+
+    /// Whether to auto-load assets on project load.
+    pub auto_load_assets: bool,
+
+    /// Whether to optimize rendering for complex timelines.
+    pub optimize_complex_timelines: bool,
+
+    /// Cache directory (if None, uses the default cache directory).
+    pub cache_dir: Option<PathBuf>,
+
+    /// Maximum cache size in bytes (if None, no limit).
+    pub max_cache_size: Option<u64>,
 }
 
 impl Default for RenderConfig {
@@ -166,6 +185,11 @@ impl Default for RenderConfig {
             end_position: None,
             threads: None,
             include_subtitles: true,
+            use_cache: true,
+            auto_load_assets: true,
+            optimize_complex_timelines: true,
+            cache_dir: None,
+            max_cache_size: Some(10 * 1024 * 1024 * 1024), // 10 GB default
         }
     }
 }
@@ -240,6 +264,41 @@ impl RenderConfig {
         self
     }
 
+    /// Sets whether to use cached assets when available.
+    #[must_use]
+    pub fn with_cache(mut self, use_cache: bool) -> Self {
+        self.use_cache = use_cache;
+        self
+    }
+
+    /// Sets whether to auto-load assets on project load.
+    #[must_use]
+    pub fn with_auto_load_assets(mut self, auto_load: bool) -> Self {
+        self.auto_load_assets = auto_load;
+        self
+    }
+
+    /// Sets whether to optimize rendering for complex timelines.
+    #[must_use]
+    pub fn with_optimize_complex_timelines(mut self, optimize: bool) -> Self {
+        self.optimize_complex_timelines = optimize;
+        self
+    }
+
+    /// Sets the cache directory.
+    #[must_use]
+    pub fn with_cache_dir(mut self, dir: PathBuf) -> Self {
+        self.cache_dir = Some(dir);
+        self
+    }
+
+    /// Sets the maximum cache size in bytes.
+    #[must_use]
+    pub fn with_max_cache_size(mut self, size: u64) -> Self {
+        self.max_cache_size = Some(size);
+        self
+    }
+
     /// Validates the configuration and returns an error if invalid.
     pub fn validate(&self) -> Result<(), String> {
         if self.output_path.as_os_str().is_empty() {
@@ -254,8 +313,40 @@ impl RenderConfig {
             return Err("Frame rate must be positive".to_string());
         }
 
-        // Add more validation as needed
-
         Ok(())
+    }
+}
+
+impl PartialEq for RenderConfig {
+    fn eq(&self, other: &Self) -> bool {
+        self.width == other.width
+            && self.height == other.height
+            && (self.frame_rate - other.frame_rate).abs() < 0.001
+            && self.video_codec == other.video_codec
+            && self.video_quality == other.video_quality
+            && self.audio_codec == other.audio_codec
+            && self.audio_quality == other.audio_quality
+            && self.format == other.format
+            && self.include_subtitles == other.include_subtitles
+    }
+}
+
+impl Eq for RenderConfig {}
+
+impl Hash for RenderConfig {
+    fn hash<H: Hasher>(&self, state: &mut H) {
+        self.width.hash(state);
+        self.height.hash(state);
+
+        // f64をハッシュ可能にするためにビット表現を使用
+        let frame_rate_bits = self.frame_rate.to_bits();
+        frame_rate_bits.hash(state);
+
+        self.video_codec.hash(state);
+        self.video_quality.hash(state);
+        self.audio_codec.hash(state);
+        self.audio_quality.hash(state);
+        self.format.hash(state);
+        self.include_subtitles.hash(state);
     }
 }

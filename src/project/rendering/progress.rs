@@ -37,29 +37,22 @@ pub struct RenderProgress {
 /// Represents the different stages of the rendering process.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum RenderStage {
-    /// Preparing the timeline data for rendering.
+    /// Ready to start rendering.
+    Ready,
+    /// Preparing to render.
     Preparing,
-
-    /// Rendering video frames.
-    RenderingVideo,
-
-    /// Processing audio tracks.
-    ProcessingAudio,
-
-    /// Muxing audio and video streams together.
-    Muxing,
-
-    /// Finalizing the output file.
-    Finalizing,
-
+    /// Preparing assets for rendering.
+    PreparingAssets,
+    /// Rendering is in progress.
+    Rendering,
+    /// Post-processing the rendered output.
+    PostProcessing,
     /// Rendering is complete.
     Complete,
-
+    /// Rendering was cancelled.
+    Cancelled,
     /// Rendering failed.
     Failed,
-
-    /// Rendering was cancelled by the user.
-    Cancelled,
 }
 
 impl RenderStage {
@@ -67,11 +60,11 @@ impl RenderStage {
     #[must_use]
     pub fn description(&self) -> &'static str {
         match self {
-            Self::Preparing => "Preparing timeline data",
-            Self::RenderingVideo => "Rendering video frames",
-            Self::ProcessingAudio => "Processing audio tracks",
-            Self::Muxing => "Combining audio and video",
-            Self::Finalizing => "Finalizing output file",
+            Self::Ready => "Ready to start rendering",
+            Self::Preparing => "Preparing to render",
+            Self::PreparingAssets => "Preparing assets for rendering",
+            Self::Rendering => "Rendering",
+            Self::PostProcessing => "Post-processing the rendered output",
             Self::Complete => "Render complete",
             Self::Failed => "Render failed",
             Self::Cancelled => "Render cancelled",
@@ -126,7 +119,7 @@ impl ProgressTracker {
                 elapsed: StdDuration::from_secs(0),
                 estimated_remaining: None,
                 render_fps: 0.0,
-                current_stage: RenderStage::Preparing,
+                current_stage: RenderStage::Ready,
             },
             start_time: now,
             last_update: now,

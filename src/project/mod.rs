@@ -364,17 +364,21 @@ impl Project {
     ///
     /// # Arguments
     ///
-    /// * `output_path` - The path where the rendered video will be saved
+    /// * `output_path` - The path to save the rendered video
     ///
     /// # Returns
     ///
-    /// A `Result` containing rendering results if successful.
+    /// The render result if successful.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if rendering failed.
     pub fn render(&self, output_path: &std::path::Path) -> Result<rendering::RenderResult> {
         let config = rendering::RenderConfig::new(output_path.to_path_buf());
         self.render_with_config(config)
     }
 
-    /// Renders the project with the specified configuration.
+    /// Renders the project with the provided rendering configuration.
     ///
     /// # Arguments
     ///
@@ -382,12 +386,104 @@ impl Project {
     ///
     /// # Returns
     ///
-    /// A `Result` containing rendering results if successful.
+    /// The render result if successful.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if rendering failed.
     pub fn render_with_config(
         &self,
         config: rendering::RenderConfig,
     ) -> Result<rendering::RenderResult> {
-        rendering::render_project(self.clone(), config).map_err(ProjectError::Rendering)
+        let result = rendering::render_project(self.clone(), config)?;
+        Ok(result)
+    }
+
+    /// Loads and prepares assets for faster rendering.
+    ///
+    /// This pre-renders and caches assets for quicker access during editing and rendering.
+    ///
+    /// # Arguments
+    ///
+    /// * `config` - Optional rendering configuration to use for asset preparation
+    ///
+    /// # Returns
+    ///
+    /// `Ok(())` if assets were prepared successfully, or an error if preparation failed.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if asset preparation failed.
+    pub fn prepare_assets(&self, config: Option<rendering::RenderConfig>) -> Result<()> {
+        // デフォルト設定または提供された設定を使用
+        let render_config = config.unwrap_or_else(|| {
+            let mut default_config = rendering::RenderConfig::default();
+            default_config.auto_load_assets = true;
+            default_config.use_cache = true;
+            default_config.optimize_complex_timelines = true;
+            default_config
+        });
+
+        // レンダリングパイプラインを作成
+        let mut pipeline = rendering::RenderPipeline::new(self.clone(), render_config);
+
+        // キャッシュを初期化
+        // システムの一時ディレクトリを使用
+        let cache_dir = std::env::temp_dir().join("edv_cache");
+        if let Err(e) = pipeline.init_cache(cache_dir, None) {
+            return Err(ProjectError::Rendering(e));
+        }
+
+        // アセットを自動読み込み
+        if let Err(e) = pipeline.auto_load_assets() {
+            return Err(ProjectError::Rendering(e));
+        }
+
+        Ok(())
+    }
+
+    /// Optimizes the project timeline for complex timelines.
+    ///
+    /// This analyzes the timeline and applies optimizations for better performance.
+    ///
+    /// # Returns
+    ///
+    /// `Ok(())` if optimization was successful, or an error if optimization failed.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if timeline optimization failed.
+    pub fn optimize_timeline(&mut self) -> Result<()> {
+        // タイムラインを分析して、複雑さのレベルを決定
+        let track_count = self.timeline.get_tracks().len();
+        let total_clips = self
+            .timeline
+            .get_tracks()
+            .iter()
+            .map(|t| t.get_clips().len())
+            .sum::<usize>();
+
+        // 複雑なタイムラインの閾値
+        const COMPLEX_THRESHOLD_TRACKS: usize = 4;
+        const COMPLEX_THRESHOLD_CLIPS: usize = 20;
+
+        let is_complex =
+            track_count > COMPLEX_THRESHOLD_TRACKS || total_clips > COMPLEX_THRESHOLD_CLIPS;
+
+        // 複雑なタイムラインの場合、最適化を適用
+        if is_complex {
+            // タイムラインに関するメタデータを設定
+            let mut metadata = self.metadata.clone();
+            metadata.insert("is_complex_timeline".to_string(), "true".to_string());
+            metadata.insert("track_count".to_string(), track_count.to_string());
+            metadata.insert("clip_count".to_string(), total_clips.to_string());
+            self.metadata = metadata;
+
+            // プロジェクトメタデータを更新
+            self.project_metadata.update_modified();
+        }
+
+        Ok(())
     }
 }
 

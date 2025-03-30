@@ -1,3 +1,4 @@
+mod cache;
 mod compositor;
 mod config;
 /// Timeline rendering functionality.
@@ -8,6 +9,7 @@ mod config;
 mod pipeline;
 mod progress;
 
+pub use cache::{CacheEntry, CacheMetadata, RenderCache};
 pub use compositor::{CompositionError, TrackCompositor};
 pub use config::{AudioCodec, OutputFormat, RenderConfig, VideoCodec};
 pub use pipeline::{RenderPipeline, RenderResult, render_project, render_project_simple};
@@ -35,6 +37,10 @@ pub enum RenderError {
     /// Rendering was cancelled by the user.
     #[error("Rendering cancelled by user")]
     Cancelled,
+
+    /// Cache error.
+    #[error("Cache error: {0}")]
+    Cache(String),
 }
 
 impl From<std::io::Error> for RenderError {

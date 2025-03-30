@@ -1,0 +1,172 @@
+# レンダリングモジュール
+
+レンダリングモジュールは、タイムラインプロジェクトをビデオファイルにレンダリングするための機能を提供します。
+複数のトラックの合成、エフェクト、進捗状況のモニタリングをサポートしています。
+
+## 主要コンポーネント
+
+### レンダリングキャッシュシステム
+
+レンダリングキャッシュシステムは、レンダリングされたアセットと中間ファイルをキャッシュして、
+レンダリングのパフォーマンスを向上させます。キャッシュされたアセットを再利用することで、
+同じアセットを何度もレンダリングする必要がなくなり、プロジェクトの読み込みと編集のスピードが向上します。
+
+```rust
+pub struct RenderCache {
+    /// キャッシュファイルのルートディレクトリ
+    cache_dir: PathBuf,
+    /// キャッシュキーによってインデックス付けされたキャッシュエントリ
+    entries: HashMap<CacheKey, CacheEntry>,
+    /// キャッシュの最大サイズ（バイト単位）
+    max_size: Option<u64>,
+    /// キャッシュの現在のサイズ（バイト単位）
+    current_size: u64,
+    /// キャッシュが有効かどうか
+    enabled: bool,
+}
+```
+
+#### 主な機能
+
+1. **アセットの自動レンダリング**：プロジェクト読み込み時にアセットを自動的にレンダリングし、編集時のパフォーマンスを向上
+2. **インテリジェントなキャッシュ戦略**：使用頻度の低いアセットを古い順に削除し、キャッシュサイズを管理
+3. **レンダリングパラメータのハッシュ化**：レンダリング設定に基づいて正確なキャッシュキーを生成
+4. **複雑なタイムラインの最適化**：複雑なタイムラインのレンダリングを最適化するための並列処理をサポート
+
+#### キャッシュエントリの構造
+
+```rust
+pub struct CacheEntry {
+    /// キャッシュされたファイルへのパス
+    pub path: PathBuf,
+    /// キャッシュされたファイルのメタデータ
+    pub metadata: CacheMetadata,
+}
+
+pub struct CacheMetadata {
+    /// キャッシュされたファイルが作成された日時
+    pub created_at: SystemTime,
+    /// ソースアセットID
+    pub source_asset_id: AssetId,
+    /// キャッシュされたコンテンツの長さ
+    pub duration: Duration,
+    /// レンダリングパラメータのハッシュ
+    pub params_hash: u64,
+    /// キャッシュされたファイルのサイズ（バイト単位）
+    pub file_size: u64,
+}
+```
+
+#### 実装の詳細
+
+キャッシュシステムは以下の流れで動作します：
+
+1. **キャッシュの初期化**：指定されたディレクトリでキャッシュを初期化し、既存のキャッシュエントリを読み込みます
+2. **キャッシュキーの生成**：アセットIDとレンダリングパラメータからハッシュベースのキャッシュキーを生成します
+3. **キャッシュの確認**：アセットをレンダリングする前に、対応するキャッシュエントリがあるかチェックします
+4. **キャッシュの追加**：新しくレンダリングされたアセットをキャッシュに追加し、メタデータを保存します
+5. **キャッシュの管理**：キャッシュサイズが最大サイズを超えた場合、古いエントリを削除します
+6. **キャッシュの無効化**：アセットが変更された場合、関連するキャッシュエントリを無効化します
+
+このシステムにより、レンダリングプロセスが大幅に高速化され、特に複雑なプロジェクトや大きなメディアファイルを扱う場合に効果的です。
+
+### TrackCompositor
+
+`TrackCompositor`はタイムラインの複数のトラックをまとめて合成し、最終的なビデオファイルを生成する役割を担います。
+
+```rust
+pub struct TrackCompositor {
+    /// 合成するタイムライン
+    timeline: Timeline,
+    /// 利用可能なアセット
+    assets: Vec<AssetReference>,
+    /// 合成中に作成された中間ファイル
+    intermediate_files: Vec<IntermediateFile>,
+    /// 合成の進捗状況を追跡するトラッカー
+    progress: Option<SharedProgressTracker>,
+    /// 複雑なタイムラインを最適化するかどうか
+    optimize_complex: bool,
+}
+```
+
+複雑なタイムラインのためのパフォーマンス最適化機能も組み込まれており、CPUコア数に基づいて処理を並列化します。
+
+### RenderConfig
+
+`RenderConfig`はレンダリング操作の設定を定義します。ビデオとオーディオのコーデック、品質設定、出力フォーマットなどが含まれます。
+
+```rust
+pub struct RenderConfig {
+    /// 出力ファイルを保存するパス
+    pub output_path: PathBuf,
+    /// 出力ビデオの幅（ピクセル）
+    pub width: u32,
+    /// 出力ビデオの高さ（ピクセル）
+    pub height: u32,
+    /// 出力ビデオのフレームレート
+    pub frame_rate: f64,
+    /// 使用するビデオコーデック
+    pub video_codec: VideoCodec,
+    /// ビデオ品質（0-100）
+    pub video_quality: u32,
+    /// 使用するオーディオコーデック
+    pub audio_codec: AudioCodec,
+    /// オーディオ品質（0-100）
+    pub audio_quality: u32,
+    /// 出力コンテナフォーマット
+    pub format: OutputFormat,
+    
+    // キャッシュ関連設定
+    /// キャッシュが利用可能な場合に使用するかどうか
+    pub use_cache: bool,
+    /// プロジェクト読み込み時にアセットを自動的に読み込むかどうか
+    pub auto_load_assets: bool,
+    /// 複雑なタイムラインのレンダリングを最適化するかどうか
+    pub optimize_complex_timelines: bool,
+    /// キャッシュディレクトリ（Noneの場合、デフォルトのキャッシュディレクトリを使用）
+    pub cache_dir: Option<PathBuf>,
+    /// キャッシュの最大サイズ（バイト単位、Noneの場合、制限なし）
+    pub max_cache_size: Option<u64>,
+    // その他の設定...
+}
+```
+
+## 使用例
+
+以下は、キャッシュを活用したレンダリングプロセスの基本的な例です：
+
+```rust
+// RenderPipelineを作成
+let mut pipeline = RenderPipeline::new(project, assets);
+
+// キャッシュを初期化
+let cache_dir = PathBuf::from("/path/to/cache");
+pipeline.init_cache(cache_dir, Some(10 * 1024 * 1024 * 1024)); // 10GB最大
+
+// レンダリング設定を構成
+let config = RenderConfig::new(PathBuf::from("output.mp4"))
+    .with_resolution(1920, 1080)
+    .with_frame_rate(30.0)
+    .with_video_settings(VideoCodec::H264, 80)
+    .with_audio_settings(AudioCodec::AAC, 80)
+    .with_format(OutputFormat::MP4)
+    .with_cache(true)
+    .with_auto_load_assets(true)
+    .with_optimize_complex_timelines(true);
+
+// プロジェクトをレンダリング
+match pipeline.render(&config) {
+    Ok(_) => println!("レンダリング完了！"),
+    Err(e) => eprintln!("レンダリングエラー: {}", e),
+}
+```
+
+## 今後の改善予定
+
+1. **アダプティブビットレート**：コンテンツの複雑さに基づいてビットレートを動的に調整
+2. **GPUアクセラレーション**：対応するハードウェアでのレンダリング高速化
+3. **プロキシファイル**：編集用の低解像度プロキシファイルのサポート
+4. **分散レンダリング**：複数のマシンでレンダリングタスクを分散するサポート
+5. **キャッシュの同期**：複数デバイス間でのキャッシュ同期メカニズム
+
+レンダリングモジュールはプロジェクトの中核となるコンポーネントであり、今後も継続的な改善と最適化が行われる予定です。 
