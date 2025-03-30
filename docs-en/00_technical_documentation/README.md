@@ -1,8 +1,8 @@
-# edv - 技術ドキュメント集
+# edv - Technical Documentation Collection
 
-このディレクトリには、edvプロジェクトの技術ドキュメントが格納されています。開発者向けの詳細な仕様、設計文書、実装ガイドラインなどが含まれます。
+This directory contains technical documentation for the edv project. It includes detailed specifications, design documents, and implementation guidelines for developers.
 
-## ディレクトリ構造
+## Directory Structure
 
 ```mermaid
 flowchart TD
@@ -11,82 +11,82 @@ flowchart TD
     Root --> Modules["03_modules/"]
     Root --> Testing["04_testing/"]
     
-    Implementation --> Design["設計文書"]
-    Implementation --> Guide["実装ガイドライン"]
+    Implementation --> Design["Design Documents"]
+    Implementation --> Guide["Implementation Guidelines"]
     
-    Phases --> Phase1["フェーズ1: 基盤構築"]
-    Phases --> Phase2["フェーズ2: 機能拡張"]
-    Phases --> Phase3["フェーズ3: 最適化"]
+    Phases --> Phase1["Phase 1: Foundation Building"]
+    Phases --> Phase2["Phase 2: Feature Expansion"]
+    Phases --> Phase3["Phase 3: Optimization"]
     
-    Modules --> Architecture["モジュール全体設計"]
-    Modules --> ModuleSpecs["個別モジュール仕様"]
+    Modules --> Architecture["Module Architecture"]
+    Modules --> ModuleSpecs["Individual Module Specifications"]
     
-    Testing --> Strategy["テスト戦略"]
-    Testing --> Cases["テストケース"]
+    Testing --> Strategy["Testing Strategy"]
+    Testing --> Cases["Test Cases"]
 ```
 
-## セクション概要
+## Section Overview
 
 ### 01_implementation_plan/
 
-実装計画と全体設計に関するドキュメントが含まれています。このセクションは、プロジェクトの技術的な基盤と方向性を定義します。
+Contains documents related to implementation plans and overall design. This section defines the technical foundation and direction of the project.
 
-- **アーキテクチャ設計**: システム全体のアーキテクチャと設計原則
-- **技術スタック**: 使用する技術とライブラリの選定理由
-- **コーディング規約**: プロジェクト全体で適用されるコーディング規約
-- **実装ロードマップ**: 主要機能の実装順序と優先順位
+- **Architecture Design**: System-wide architecture and design principles
+- **Technology Stack**: Rationale for selected technologies and libraries
+- **Coding Conventions**: Coding standards applied throughout the project
+- **Implementation Roadmap**: Sequence and priorities for implementing key features
 
 ### 02_development_phases/
 
-開発フェーズとマイルストーンに関するドキュメントが含まれています。プロジェクトの進行段階と各フェーズの目標を定義します。
+Contains documents related to development phases and milestones. This section defines project stages and goals for each phase.
 
-- **フェーズ1**: 基盤モジュールと核となる機能の実装
-- **フェーズ2**: 拡張機能と高度な処理の実装
-- **フェーズ3**: パフォーマンス最適化とユーザビリティ向上
-- **リリース計画**: バージョン管理とリリースサイクル
+- **Phase 1**: Implementation of foundation modules and core features
+- **Phase 2**: Implementation of extended features and advanced processing
+- **Phase 3**: Performance optimization and usability improvements
+- **Release Planning**: Version management and release cycles
 
 ### 03_modules/
 
-各モジュールの詳細仕様とAPI設計が含まれています。このセクションは、開発者がモジュールの実装と統合を行う際の主要な参照先となります。
+Contains detailed specifications and API designs for each module. This section serves as the primary reference for developers implementing and integrating modules.
 
-- **00_architecture_overview.md**: モジュール間の関係と全体アーキテクチャ
-- **01_cli_module.md**: コマンドラインインターフェースモジュール
-- **02_core_module.md**: コア機能モジュール
-- **03_processing_module.md**: 処理モジュール
-- **04_project_module.md**: プロジェクト管理モジュール
-- **05_asset_module.md**: アセット管理モジュール
-- **06_utility_module.md**: ユーティリティモジュール
-- **07_subtitle_module.md**: 字幕処理モジュール
-- **08_audio_module.md**: 音声処理モジュール
-- **09_ffmpeg_module.md**: FFmpeg連携モジュール
+- **00_architecture_overview.md**: Inter-module relationships and overall architecture
+- **01_cli_module.md**: Command-line interface module
+- **02_core_module.md**: Core functionality module
+- **03_processing_module.md**: Processing module
+- **04_project_module.md**: Project management module
+- **05_asset_module.md**: Asset management module
+- **06_utility_module.md**: Utility module
+- **07_subtitle_module.md**: Subtitle processing module
+- **08_audio_module.md**: Audio processing module
+- **09_ffmpeg_module.md**: FFmpeg integration module
 
 ### 04_testing/
 
-テスト戦略とテストケースの仕様が含まれています。品質保証プロセスとテスト手法を定義します。
+Contains specifications for testing strategies and test cases. This section defines quality assurance processes and testing methodologies.
 
-- **テスト方針**: 単体テスト、統合テスト、システムテストのアプローチ
-- **テスト環境**: テスト実行環境の設定と要件
-- **テストケース**: 主要機能のテストケース
-- **自動化テスト**: CI/CDパイプラインとテスト自動化
+- **Testing Approach**: Unit testing, integration testing, and system testing approaches
+- **Test Environment**: Test environment configuration and requirements
+- **Test Cases**: Test cases for key features
+- **Automated Testing**: CI/CD pipeline and test automation
 
-## ドキュメント更新ガイドライン
+## Documentation Update Guidelines
 
-技術ドキュメントは、コードと同様に重要なプロジェクト資産です。以下のガイドラインに従ってドキュメントを更新してください：
+Technical documentation is as important as code in the project assets. Please follow these guidelines when updating documentation:
 
-1. **コードと同期**: 大きなコード変更時には対応するドキュメントも更新する
-2. **Mermaidダイアグラム**: 複雑な概念や関係はMermaidダイアグラムを使用して視覚化する
-3. **コミットメッセージ**: ドキュメント更新時は `docs: ` プレフィックスを使用する
-4. **レビュー**: コードレビューにはドキュメントレビューも含める
+1. **Sync with Code**: Update corresponding documentation when making significant code changes
+2. **Mermaid Diagrams**: Use Mermaid diagrams to visualize complex concepts and relationships
+3. **Commit Messages**: Use the `docs: ` prefix for documentation update commit messages
+4. **Reviews**: Include documentation review as part of code reviews
 
-## 記法とフォーマット
+## Notation and Formatting
 
-ドキュメントは一貫したスタイルで書かれるべきです：
+Documentation should be written in a consistent style:
 
-- **見出し**: トピック階層を表現するために適切な見出しレベルを使用
-- **コードブロック**: コード例は言語指定付きのコードブロックで囲む
-- **相互参照**: 関連ドキュメントへのリンクを提供する
-- **図表**: 複雑な概念はMermaidダイアグラムを使用して説明
+- **Headings**: Use appropriate heading levels to represent topic hierarchy
+- **Code Blocks**: Enclose code examples in language-specified code blocks
+- **Cross-References**: Provide links to related documentation
+- **Diagrams**: Explain complex concepts using Mermaid diagrams
 
-## 貢献
+## Contributing
 
-技術ドキュメントへの貢献を歓迎します。新しいドキュメントを追加、既存のドキュメントを更新する場合は、プルリクエストを通じて提出してください。 
+Contributions to technical documentation are welcome. Please submit new documentation or updates to existing documentation through pull requests. 
