@@ -5,6 +5,8 @@
 /// as the core abstraction for command execution in the application.
 use std::collections::HashMap;
 use std::fmt::Debug;
+use std::fs;
+use std::path::Path;
 
 use crate::core::Context;
 
@@ -188,6 +190,103 @@ impl Command for RenderCommand {
         context.logger.info(&format!("Args: {:?}", args));
 
         // Return success for now - this is just a stub until fully implemented
+        Ok(())
+    }
+}
+
+/// Display information about a media file.
+#[derive(Debug)]
+pub struct InfoCommand;
+
+impl InfoCommand {
+    /// Creates a new info command.
+    #[must_use]
+    pub fn new() -> Self {
+        Self
+    }
+}
+
+impl Command for InfoCommand {
+    fn name(&self) -> &str {
+        "info"
+    }
+
+    fn description(&self) -> &str {
+        "Display information about a media file"
+    }
+
+    fn usage(&self) -> &str {
+        "info <file_path> [--detailed]"
+    }
+
+    fn execute(&self, context: &Context, args: &[String]) -> Result<()> {
+        if args.is_empty() {
+            return Err(Error::MissingArgument("file path".to_string()));
+        }
+
+        let file_path = &args[0];
+        let path = Path::new(file_path);
+
+        // Check if file exists
+        if !path.exists() {
+            return Err(Error::InvalidPath(format!("File not found: {}", file_path)));
+        }
+
+        // Get basic file information
+        context
+            .logger
+            .info(&format!("File information for: {}", file_path));
+
+        if let Ok(metadata) = fs::metadata(path) {
+            let size_bytes = metadata.len();
+            let size_kb = size_bytes as f64 / 1024.0;
+            let size_mb = size_kb / 1024.0;
+
+            context.logger.info(&format!("File exists: Yes"));
+            context.logger.info(&format!(
+                "File size: {} bytes ({:.2} KB, {:.2} MB)",
+                size_bytes, size_kb, size_mb
+            ));
+
+            // Get MIME type (if can be guessed)
+            if let Some(file_type) = mime_guess::from_path(path).first_raw() {
+                context
+                    .logger
+                    .info(&format!("MIME type (guessed): {}", file_type));
+            }
+
+            // Show if it's a directory
+            if metadata.is_dir() {
+                context.logger.info("Type: Directory");
+            } else if metadata.is_file() {
+                context.logger.info("Type: Regular file");
+            }
+
+            // Show if detailed mode is requested
+            let detailed = args.len() > 1 && (args[1] == "--detailed" || args[1] == "-d");
+            if detailed {
+                if let Ok(last_modified) = metadata.modified() {
+                    let last_modified_str = chrono::DateTime::<chrono::Local>::from(last_modified)
+                        .format("%Y-%m-%d %H:%M:%S")
+                        .to_string();
+                    context
+                        .logger
+                        .info(&format!("Last modified: {}", last_modified_str));
+                }
+
+                // In a real implementation, we would use FFmpeg here to get media-specific details
+                context
+                    .logger
+                    .info("Note: Full media information requires FFmpeg integration (coming soon)");
+            }
+        } else {
+            return Err(Error::InvalidPath(format!(
+                "Could not read file metadata: {}",
+                file_path
+            )));
+        }
+
+        context.logger.info("Info command executed successfully");
         Ok(())
     }
 }

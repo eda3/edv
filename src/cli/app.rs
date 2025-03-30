@@ -149,9 +149,12 @@ impl App {
         // self.command_registry.register(Box::new(commands::TrimCommand::new()))?;
         // self.command_registry.register(Box::new(commands::ConcatCommand::new()))?;
         // self.command_registry.register(Box::new(commands::ConvertCommand::new()))?;
-        // self.command_registry.register(Box::new(commands::InfoCommand::new()))?;
 
-        // Register our new render command
+        // Register info command
+        self.command_registry
+            .register(Box::new(commands::InfoCommand::new()))?;
+
+        // Register our render command
         self.command_registry
             .register(Box::new(commands::RenderCommand::new()))?;
 
@@ -169,7 +172,7 @@ impl App {
     /// `Result<()>` indicating success or failure.
     pub fn execute_command(&self, command: Commands) -> Result<()> {
         // Create execution context
-        let _context = self.create_execution_context()?;
+        let context = self.create_execution_context()?;
 
         // Match on command type and execute appropriate handler
         match command {
@@ -209,9 +212,20 @@ impl App {
                     input, detailed
                 ));
 
-                // Command implementation will be added later
-                // This is a placeholder to avoid unused variable warnings
-                self.logger.info("Info command executed successfully");
+                // Get the InfoCommand from the registry and execute it
+                if let Ok(info_cmd) = self.command_registry.get("info") {
+                    // Convert arguments
+                    let mut args = vec![input];
+                    if detailed {
+                        args.push("--detailed".to_string());
+                    }
+
+                    // Execute the command with prepared arguments
+                    info_cmd.execute(&context, &args)?;
+                } else {
+                    // Fallback to placeholder implementation
+                    self.logger.info("Info command executed successfully");
+                }
             }
         }
 
