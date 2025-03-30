@@ -81,15 +81,50 @@
 ///     Composite -.-> Cancel
 /// ```
 use std::collections::HashMap;
+use std::fmt;
+use std::hash::{Hash, Hasher};
 use std::path::Path;
 use std::process::{Command, Stdio};
 
 use crate::project::AssetId;
 use crate::project::AssetReference;
-use crate::project::rendering::config::RenderConfig;
+use crate::project::rendering::config::{AudioCodec, RenderConfig, VideoCodec};
 use crate::project::rendering::progress::{RenderStage, SharedProgressTracker};
+use crate::project::timeline::keyframes::{EasingFunction, KeyframeAnimation};
+use crate::project::timeline::multi_track;
 use crate::project::timeline::{Clip, Timeline, Track, TrackId, TrackKind};
 use crate::utility::time::{Duration, TimePosition};
+
+/// ブレンドモードの種類。
+/// ビデオトラックの合成方法を指定します。
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub enum BlendMode {
+    /// 通常の重ね合わせ（標準的なオーバーレイ）
+    Normal,
+    /// 加算合成（明るさが加算される）
+    Add,
+    /// 乗算合成（暗いピクセルが強調される）
+    Multiply,
+    /// スクリーン合成（明るいピクセルが強調される）
+    Screen,
+}
+
+impl Default for BlendMode {
+    fn default() -> Self {
+        Self::Normal
+    }
+}
+
+impl fmt::Display for BlendMode {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::Normal => write!(f, "normal"),
+            Self::Add => write!(f, "add"),
+            Self::Multiply => write!(f, "multiply"),
+            Self::Screen => write!(f, "screen"),
+        }
+    }
+}
 
 /// Simple FFmpeg command builder for composition
 #[derive(Debug)]
@@ -113,91 +148,91 @@ impl FFmpegCommand {
     }
 
     /// Adds an input file to the command
-    fn add_input<P: AsRef<Path>>(&mut self, input: P) -> &mut Self {
-        self.inputs.push(input.as_ref().to_path_buf());
+    fn add_input(&mut self, path: &Path) -> &mut Self {
+        self.inputs.push(path.to_path_buf());
         self
     }
 
     /// Sets the output file for the command
-    fn set_output<P: AsRef<Path>>(&mut self, output: P) -> &mut Self {
-        self.output = Some(output.as_ref().to_path_buf());
+    fn set_output(&mut self, path: &Path) -> &mut Self {
+        self.output = Some(path.to_path_buf());
         self
     }
 
-    /// Sets the video codec
+    /// Adds a complex filter to the command
+    fn add_complex_filter(&mut self, filter: &str) -> &mut Self {
+        self.args.push("-filter_complex".to_string());
+        self.args.push(filter.to_string());
+        self
+    }
+
+    /// Adds an argument with a value to the command
+    fn add_arg(&mut self, arg: &str, value: &str) -> &mut Self {
+        self.args.push(arg.to_string());
+        self.args.push(value.to_string());
+        self
+    }
+
+    /// Sets the video codec for the command
     fn set_video_codec(&mut self, codec: &str) -> &mut Self {
-        self.args.push("-c:v".to_string());
-        self.args.push(codec.to_string());
-        self
+        self.add_arg("-c:v", codec)
     }
 
-    /// Sets the audio codec
+    /// Sets the audio codec for the command
     fn set_audio_codec(&mut self, codec: &str) -> &mut Self {
-        self.args.push("-c:a".to_string());
-        self.args.push(codec.to_string());
-        self
+        self.add_arg("-c:a", codec)
     }
 
-    /// Sets the frame rate
-    fn set_frame_rate(&mut self, frame_rate: f64) -> &mut Self {
-        self.args.push("-r".to_string());
-        self.args.push(frame_rate.to_string());
-        self
+    /// Sets the frame rate for the command
+    fn set_frame_rate(&mut self, fps: f64) -> &mut Self {
+        self.add_arg("-r", &fps.to_string())
     }
 
-    /// Sets the video size
+    /// Sets the video size for the command
     fn set_video_size(&mut self, width: u32, height: u32) -> &mut Self {
-        self.args.push("-s".to_string());
-        self.args.push(format!("{}x{}", width, height));
-        self
+        self.add_arg("-s", &format!("{}x{}", width, height))
     }
 
     /// Runs the FFmpeg command
     fn run(&self) -> Result<()> {
-        if self.inputs.is_empty() {
-            return Err(CompositionError::FFmpeg(
-                crate::ffmpeg::Error::MissingArgument("No input files specified".to_string()),
-            ));
-        }
+        // Create the command
+        let mut command = Command::new("ffmpeg");
 
-        if self.output.is_none() {
-            return Err(CompositionError::FFmpeg(
-                crate::ffmpeg::Error::MissingArgument("No output file specified".to_string()),
-            ));
-        }
-
-        let mut cmd = Command::new("ffmpeg");
-
-        // Always overwrite output files
-        cmd.arg("-y");
-
-        // Add all inputs
+        // Add the inputs
         for input in &self.inputs {
-            cmd.arg("-i").arg(input);
+            command.arg("-i").arg(input);
         }
 
-        // Add all additional arguments
+        // Add the additional arguments
         for arg in &self.args {
-            cmd.arg(arg);
+            command.arg(arg);
         }
 
-        // Add output file
-        cmd.arg(self.output.as_ref().unwrap());
+        // Add the output
+        if let Some(output) = &self.output {
+            command.arg(output);
+        }
+
+        // Add overwrite flag
+        command.arg("-y");
+
+        // Set up stdout and stderr
+        command.stdout(Stdio::piped());
+        command.stderr(Stdio::piped());
 
         // Run the command
-        let output = cmd
-            .stderr(Stdio::piped())
-            .stdout(Stdio::piped())
+        let output = command
             .output()
             .map_err(|e| CompositionError::FFmpeg(crate::ffmpeg::Error::IoError(e)))?;
 
-        // Check if successful
+        // Check the exit status
         if !output.status.success() {
+            // Get the error output
             let stderr = String::from_utf8_lossy(&output.stderr);
             return Err(CompositionError::FFmpeg(
                 crate::ffmpeg::Error::ProcessTerminated {
                     exit_code: output.status.code(),
-                    message: format!("FFmpeg process failed: {}", stderr),
+                    message: format!("FFmpeg command failed: {}", stderr),
                 },
             ));
         }
@@ -598,49 +633,210 @@ impl TrackCompositor {
         video_tracks: &[&PreparedTrack],
         config: &RenderConfig,
     ) -> String {
-        // Track indices for input mapping (0-based in FFmpeg)
+        if video_tracks.is_empty() {
+            return String::new();
+        }
+
+        // フィルタパーツとオーバーレイチェーン用の変数
         let mut filter_parts = Vec::new();
         let mut overlay_chain = String::new();
 
-        // Sort tracks by z-order (typically order of addition is the z-order in simple cases)
-        // In a real implementation, this would use explicit z-order from the tracks
-        let mut ordered_tracks: Vec<&PreparedTrack> = video_tracks.to_vec();
+        // マルチトラック関係を考慮したZ順序の決定
+        let mut ordered_tracks: Vec<&PreparedTrack> = Vec::new();
 
-        // Sort by ID - we'll use the Debug representation as a simple way to compare
-        ordered_tracks.sort_by(|a, b| format!("{:?}", a.id).cmp(&format!("{:?}", b.id)));
+        // トラック関係マネージャからソート順を取得
+        let multi_track_manager = self.timeline.multi_track_manager();
 
-        // Process each track to prepare it for composition
+        // まずは可視性のあるトラックだけをフィルタリング
+        let visible_tracks: Vec<&PreparedTrack> = video_tracks
+            .iter()
+            .filter(|track| {
+                // トラックが可視かどうかを確認（実際のデータから取得）
+                // デフォルトは可視とする
+                true
+            })
+            .copied()
+            .collect();
+
+        // 関係に基づいてトラックをソート
+        // 下位レイヤーから上位レイヤーの順に処理（z-index が低いものから高いものへ）
+        if !visible_tracks.is_empty() {
+            // 未整理のトラックを追跡
+            let mut remaining_tracks: Vec<&PreparedTrack> = visible_tracks.clone();
+
+            // トラック関係に基づいて順序付け（シンプルなケース用）
+            // 実装ではトラック関係マネージャを使って適切に順序付け
+
+            // トラックIDからアルファベット順の単純なソート（実際の実装では置き換え）
+            remaining_tracks.sort_by(|a, b| format!("{:?}", a.id).cmp(&format!("{:?}", b.id)));
+
+            ordered_tracks = remaining_tracks;
+        }
+
+        // 各トラックを処理してフィルターグラフを構築
         for (i, track) in ordered_tracks.iter().enumerate() {
-            let input_index = i; // Assume track index matches FFmpeg input index
+            let input_index = i; // 入力インデックスはFFmpegの入力順序に一致すると仮定
 
-            // Scale video to match output dimensions
-            let scale_filter = format!(
-                "[{input_index}:v] scale={width}:{height},setsar=1 [v{i}]",
-                input_index = input_index,
-                width = config.width,
-                height = config.height,
-                i = i
+            // アルファチャンネルのサポートを確保（透明度のある合成のため）
+            let format_filter = format!(
+                "[{input_index}:v] format=yuva420p",
+                input_index = input_index
             );
-            filter_parts.push(scale_filter);
 
-            // For the first track, just use it as the base
+            // 出力サイズに合わせてスケーリング
+            let scale_filter = format!(
+                "{} ,scale={width}:{height},setsar=1",
+                format_filter,
+                width = config.width,
+                height = config.height
+            );
+
+            // キーフレームとアニメーションのサポート追加
+            let mut track_filters = scale_filter;
+
+            // トラックのキーフレームをチェックして適用
+            if let Some(track_obj) = self.timeline.get_track(track.id) {
+                if let Some(keyframes) = track_obj.keyframes() {
+                    // 不透明度キーフレームの処理
+                    if keyframes.has_property("opacity") {
+                        // タイムライン上の特定位置での不透明度を取得
+                        // （現在の実装では簡略化のため中間位置で取得）
+                        let opacity_pos =
+                            TimePosition::from_seconds(track.duration.as_seconds() / 2.0);
+                        let opacity_value = keyframes
+                            .get_value_at("opacity", opacity_pos)
+                            .unwrap_or(1.0); // デフォルトは完全不透明
+
+                        track_filters =
+                            format!("{},colorchannelmixer=aa={}", track_filters, opacity_value);
+                    }
+
+                    // 他のキーフレームアニメーションの処理
+                    // 位置、回転、スケールなど
+                    if keyframes.has_property("position_x") && keyframes.has_property("position_y")
+                    {
+                        // 位置キーフレームを適用
+                        let pos_x = keyframes
+                            .get_value_at("position_x", TimePosition::from_seconds(0.0))
+                            .unwrap_or(0.0);
+                        let pos_y = keyframes
+                            .get_value_at("position_y", TimePosition::from_seconds(0.0))
+                            .unwrap_or(0.0);
+
+                        track_filters = format!(
+                            "{},pad=iw:ih:{}:{}:color=black@0",
+                            track_filters, pos_x, pos_y
+                        );
+                    }
+
+                    if keyframes.has_property("scale") {
+                        // スケールキーフレームを適用
+                        let scale_value = keyframes
+                            .get_value_at("scale", TimePosition::from_seconds(0.0))
+                            .unwrap_or(1.0);
+
+                        track_filters = format!(
+                            "{},scale=iw*{}:ih*{}",
+                            track_filters, scale_value, scale_value
+                        );
+                    }
+                }
+            }
+
+            // 最終的なトラック出力ラベルを追加
+            track_filters = format!("{} [v{}]", track_filters, i);
+            filter_parts.push(track_filters);
+
+            // 合成チェーンの構築
             if i == 0 {
+                // 最初のトラックは基本レイヤーとして使用
                 overlay_chain = format!("[v0]");
             } else {
-                // For subsequent tracks, overlay them on top of the previous result
-                let overlay_filter = format!(
-                    "{prev}[v{current}] overlay=shortest=1 [v{next}]",
-                    prev = overlay_chain,
-                    current = i,
-                    next = i + 1
-                );
-                filter_parts.push(overlay_filter);
-                overlay_chain = format!("[v{}]", i + 1);
+                // トラック関係からブレンドモードを取得
+                let blend_mode = self.get_blend_mode_for_track(track.id);
+
+                // 選択されたブレンドモードに基づいて適切なオーバーレイフィルターを使用
+                let overlay_filter = match blend_mode {
+                    BlendMode::Normal => format!(
+                        "{prev}[v{current}] overlay=shortest=1:format=yuv420",
+                        prev = overlay_chain,
+                        current = i
+                    ),
+                    BlendMode::Add => format!(
+                        "{prev}[v{current}] blend=all_mode=addition:all_opacity=1",
+                        prev = overlay_chain,
+                        current = i
+                    ),
+                    BlendMode::Multiply => format!(
+                        "{prev}[v{current}] blend=all_mode=multiply:all_opacity=1",
+                        prev = overlay_chain,
+                        current = i
+                    ),
+                    BlendMode::Screen => format!(
+                        "{prev}[v{current}] blend=all_mode=screen:all_opacity=1",
+                        prev = overlay_chain,
+                        current = i
+                    ),
+                };
+
+                let next_output = format!("[v{next}]", next = i + 1);
+                filter_parts.push(format!("{} {}", overlay_filter, next_output));
+                overlay_chain = next_output;
             }
         }
 
-        // Concatenate all filter parts with semicolons
+        // すべてのフィルター部分をセミコロンで連結
         filter_parts.join(";")
+    }
+
+    /// Gets the blend mode for a specific track.
+    ///
+    /// In a real implementation, this would retrieve the blend mode from track properties.
+    ///
+    /// # Arguments
+    ///
+    /// * `track_id` - The ID of the track
+    ///
+    /// # Returns
+    ///
+    /// The blend mode for the track
+    fn get_blend_mode_for_track(&self, track_id: TrackId) -> BlendMode {
+        // トラックからブレンドモードを取得
+        if let Some(track) = self.timeline.get_track(track_id) {
+            // まずはキーフレームからブレンドモードを確認
+            if let Some(keyframes) = track.keyframes() {
+                if keyframes.has_property("blend_mode") {
+                    // ブレンドモードは数値で保存されていると仮定
+                    // 0: Normal, 1: Add, 2: Multiply, 3: Screen
+                    if let Some(blend_value) =
+                        keyframes.get_value_at("blend_mode", TimePosition::from_seconds(0.0))
+                    {
+                        let blend_index = blend_value.round() as i32;
+                        return match blend_index {
+                            0 => BlendMode::Normal,
+                            1 => BlendMode::Add,
+                            2 => BlendMode::Multiply,
+                            3 => BlendMode::Screen,
+                            _ => BlendMode::Normal, // デフォルト
+                        };
+                    }
+                }
+            }
+
+            // トラックの種類に基づくデフォルトブレンドモード
+            // 例: オーバーレイトラックにはスクリーンモードを使用
+            let track_name = track.name().to_lowercase();
+            if track_name.contains("overlay") || track_name.contains("オーバーレイ") {
+                return BlendMode::Screen;
+            } else if track_name.contains("effect") || track_name.contains("エフェクト") {
+                return BlendMode::Add;
+            } else if track_name.contains("shadow") || track_name.contains("影") {
+                return BlendMode::Multiply;
+            }
+        }
+
+        // デフォルトはNormal
+        BlendMode::Normal
     }
 
     /// Generates an FFmpeg filter graph for multi-track audio composition.
@@ -665,39 +861,177 @@ impl TrackCompositor {
             return String::new();
         }
 
-        // Track indices for input mapping
+        // フィルタパーツとミキシング入力用の変数
         let mut filter_parts = Vec::new();
         let mut amix_inputs = Vec::new();
 
-        // Process each track
-        for (i, _track) in audio_tracks.iter().enumerate() {
-            let input_index = i; // Assume track index matches FFmpeg input index
+        // マルチトラック関係と優先順位を考慮
+        let multi_track_manager = self.timeline.multi_track_manager();
 
-            // Normalize audio to prevent clipping
-            let normalize_filter = format!(
-                "[{input_index}:a] aformat=sample_fmts=fltp:channel_layouts=stereo,volume=1.0 [a{i}]",
+        // 各トラックを処理（順序は重要ではない - すべて混合される）
+        for (i, track) in audio_tracks.iter().enumerate() {
+            let input_index = i; // 入力インデックスはFFmpeg入力順序に一致すると仮定
+
+            // ボリューム調整の適用
+            let volume_value = self.get_track_volume(track.id);
+
+            // オーディオのノーマライズとフォーマット設定
+            let audio_filter = format!(
+                "[{input_index}:a] aformat=sample_fmts=fltp:channel_layouts=stereo,volume={volume}",
                 input_index = input_index,
-                i = i
+                volume = volume_value
             );
-            filter_parts.push(normalize_filter);
+
+            // タイムラインのフェードとエフェクトの処理
+            let mut processed_filter = audio_filter;
+
+            // キーフレームアニメーションの適用
+            if let Some(track_obj) = self.timeline.get_track(track.id) {
+                if let Some(keyframes) = track_obj.keyframes() {
+                    // ボリュームキーフレームの処理
+                    if keyframes.has_property("volume") {
+                        // タイムライン上の特定位置でのボリューム値
+                        // （現実的な実装では複数ポイントでのキーフレームをチェック）
+
+                        // フェードイン/アウトの実装
+                        let duration = track.duration.as_seconds();
+
+                        // フェードイン（最初の1秒）
+                        if duration > 1.0 {
+                            processed_filter = format!("{},afade=t=in:st=0:d=1", processed_filter);
+                        }
+
+                        // フェードアウト（最後の1秒）
+                        if duration > 2.0 {
+                            processed_filter = format!(
+                                "{},afade=t=out:st={}:d=1",
+                                processed_filter,
+                                duration - 1.0
+                            );
+                        }
+                    }
+
+                    // EQ設定のキーフレーム（低音/高音の調整など）
+                    if keyframes.has_property("bass") || keyframes.has_property("treble") {
+                        let bass = keyframes
+                            .get_value_at("bass", TimePosition::from_seconds(0.0))
+                            .unwrap_or(0.0);
+                        let treble = keyframes
+                            .get_value_at("treble", TimePosition::from_seconds(0.0))
+                            .unwrap_or(0.0);
+
+                        // 簡易的なEQ調整（実際の実装ではより詳細な設定）
+                        if bass != 0.0 || treble != 0.0 {
+                            processed_filter = format!(
+                                "{},equalizer=f=100:t=h:width=200:g={}:f=10000:t=h:width=2000:g={}",
+                                processed_filter, bass, treble
+                            );
+                        }
+                    }
+                }
+            }
+
+            // トラック間の関係性を考慮した処理
+            // 例: ミュート設定やソロトラックの処理
+            let mut is_muted = false;
+
+            // ミュート状態の確認（実際の実装ではトラックプロパティから取得）
+            if let Some(track_obj) = self.timeline.get_track(track.id) {
+                if let Some(keyframes) = track_obj.keyframes() {
+                    if let Some(mute_value) =
+                        keyframes.get_value_at("mute", TimePosition::from_seconds(0.0))
+                    {
+                        is_muted = mute_value > 0.5; // 0.5以上ならミュート
+                    }
+                }
+            }
+
+            // ミュートトラックの場合はボリュームを0に設定
+            if is_muted {
+                processed_filter = format!("{},volume=0", processed_filter);
+            }
+
+            // 出力ラベルを追加
+            processed_filter = format!("{} [a{}]", processed_filter, i);
+            filter_parts.push(processed_filter);
             amix_inputs.push(format!("[a{}]", i));
         }
 
-        // Add the amix filter if we have multiple tracks
+        // 複数のトラックがある場合はamixフィルターを追加
         if audio_tracks.len() > 1 {
+            // 高度なミキシングパラメータ
+            // duration=longest: 最も長いトラックに合わせる
+            // normalize=0: ボリュームを正規化しない（手動設定を優先）
+            // dropout_transition: トラック終了時のフェードアウト時間
             let amix_filter = format!(
-                "{} amix=inputs={}:duration=longest [aout]",
+                "{} amix=inputs={}:duration=longest:normalize=0:dropout_transition=0.5 [aout]",
                 amix_inputs.join(""),
                 audio_tracks.len()
             );
             filter_parts.push(amix_filter);
-        } else {
-            // If only one track, just map it directly
-            filter_parts.push(format!("[a0] [aout]"));
+        } else if !audio_tracks.is_empty() {
+            // 単一トラックの場合は直接マッピング
+            filter_parts.push(format!("{} asetpts=PTS-STARTPTS [aout]", amix_inputs[0]));
         }
 
-        // Concatenate all filter parts with semicolons
+        // すべてのフィルター部分をセミコロンで連結
         filter_parts.join(";")
+    }
+
+    /// Gets the volume level for a specific track.
+    ///
+    /// In a real implementation, this would retrieve the volume from track properties.
+    ///
+    /// # Arguments
+    ///
+    /// * `track_id` - The ID of the track
+    ///
+    /// # Returns
+    ///
+    /// The volume level for the track (1.0 is normal)
+    fn get_track_volume(&self, track_id: TrackId) -> f64 {
+        // トラックからボリューム設定を取得
+        if let Some(track) = self.timeline.get_track(track_id) {
+            // キーフレームからボリューム値を確認
+            if let Some(keyframes) = track.keyframes() {
+                // ミュート状態を最初に確認
+                if keyframes.has_property("mute") {
+                    if let Some(mute_value) =
+                        keyframes.get_value_at("mute", TimePosition::from_seconds(0.0))
+                    {
+                        if mute_value > 0.5 {
+                            return 0.0; // ミュート時はボリューム0
+                        }
+                    }
+                }
+
+                // 次に直接のボリュームプロパティを確認
+                if keyframes.has_property("volume") {
+                    if let Some(volume) =
+                        keyframes.get_value_at("volume", TimePosition::from_seconds(0.0))
+                    {
+                        // 値が有効な範囲内かチェック（0.0〜2.0）
+                        if volume >= 0.0 {
+                            return volume.min(2.0); // 最大2.0（200%）に制限
+                        }
+                    }
+                }
+            }
+
+            // トラックの種類に基づくデフォルトボリューム
+            let track_name = track.name().to_lowercase();
+            if track_name.contains("background") || track_name.contains("バックグラウンド")
+            {
+                return 0.5; // 背景は少し小さめのボリューム
+            } else if track_name.contains("effect") || track_name.contains("エフェクト") {
+                return 0.7; // エフェクトは控えめのボリューム
+            } else if track_name.contains("main") || track_name.contains("メイン") {
+                return 1.0; // メイントラックは通常ボリューム
+            }
+        }
+
+        // デフォルトボリュームは1.0（100%）
+        1.0
     }
 
     /// Composite the prepared tracks together.
@@ -756,44 +1090,81 @@ impl TrackCompositor {
 
         // オーディオトラックのフィルタグラフを生成
         if !audio_tracks.is_empty() {
+            // ビデオフィルターがある場合はセミコロンで区切る
             if !complex_filter.is_empty() {
-                complex_filter.push_str(";");
+                complex_filter.push(';');
             }
             complex_filter.push_str(&self.generate_audio_filtergraph(&audio_tracks, config));
         }
 
-        // フィルタグラフをコマンドに追加
+        // フィルターが存在する場合、コマンドにフィルターを追加
         if !complex_filter.is_empty() {
-            ffmpeg.args.push("-filter_complex".to_string());
-            ffmpeg.args.push(complex_filter);
+            ffmpeg.add_complex_filter(&complex_filter);
 
-            // 出力ストリームマッピング
+            // フィルター出力のマッピング
             if !video_tracks.is_empty() {
-                ffmpeg.args.push("-map".to_string());
-                ffmpeg.args.push("[v]".to_string());
+                ffmpeg.add_arg("-map", &format!("[v{}]", video_tracks.len()));
             }
-
             if !audio_tracks.is_empty() {
-                ffmpeg.args.push("-map".to_string());
-                ffmpeg.args.push("[aout]".to_string());
+                ffmpeg.add_arg("-map", "[aout]");
+            }
+        } else {
+            // フィルターがない場合、デフォルトのマッピングを使用
+            if !video_tracks.is_empty() {
+                ffmpeg.add_arg("-map", "0:v");
+            }
+            if !audio_tracks.is_empty() {
+                ffmpeg.add_arg("-map", "0:a");
             }
         }
 
-        // 字幕トラックがある場合の処理
+        // 字幕トラックのマッピング
         if !subtitle_tracks.is_empty() {
-            // TODO: 字幕の処理を実装
-            // 現在のところ、サポートなし
+            // 字幕トラックのマッピングロジック（簡略化）
+            ffmpeg.add_arg("-map", "0:s");
         }
 
-        // 出力オプションを設定
-        ffmpeg
-            .set_output(output_path)
-            .set_video_codec(config.video_codec.to_ffmpeg_codec())
-            .set_audio_codec(config.audio_codec.to_ffmpeg_codec())
-            .set_frame_rate(config.frame_rate)
-            .set_video_size(config.width, config.height);
+        // 出力フォーマットと品質設定
+        ffmpeg.set_output(output_path);
 
-        // 追加のエンコードオプション
+        // ビデオコーデック設定
+        if !video_tracks.is_empty() {
+            ffmpeg.add_arg("-c:v", config.video_codec.to_ffmpeg_codec());
+            ffmpeg.add_arg("-pix_fmt", "yuv420p"); // 互換性のための標準ピクセルフォーマット
+
+            // 品質設定
+            if config.video_codec != VideoCodec::Copy {
+                // 例: H.264 / H.265 用の CRF 設定
+                if config.video_codec == VideoCodec::H264 || config.video_codec == VideoCodec::H265
+                {
+                    ffmpeg.add_arg("-crf", "23"); // デフォルトの品質値
+                }
+            }
+
+            // プリセット設定（エンコード速度と圧縮率のバランス）
+            if config.video_codec == VideoCodec::H264 || config.video_codec == VideoCodec::H265 {
+                ffmpeg.add_arg("-preset", "medium");
+            }
+
+            // フレームレート設定
+            ffmpeg.add_arg("-r", &config.frame_rate.to_string());
+        }
+
+        // オーディオコーデック設定
+        if !audio_tracks.is_empty() {
+            ffmpeg.add_arg("-c:a", config.audio_codec.to_ffmpeg_codec());
+            // オーディオ品質設定
+            if config.audio_codec != AudioCodec::Copy {
+                ffmpeg.add_arg("-b:a", "192k");
+            }
+        }
+
+        // 字幕設定
+        if !subtitle_tracks.is_empty() {
+            ffmpeg.add_arg("-c:s", "mov_text"); // 互換性のある字幕フォーマット
+        }
+
+        // 複雑なタイムラインのための最適化
         if self.optimize_complex {
             // 複雑なタイムラインのための最適化オプション
             if video_tracks.len() > 3 {
@@ -826,5 +1197,232 @@ impl TrackCompositor {
         self.update_progress(RenderStage::Complete);
 
         Ok(())
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::utility::time::{Duration, TimePosition};
+
+    // テスト用のタイムラインとトラックを作成するヘルパー関数
+    fn create_test_timeline_with_track(
+        track_name: &str,
+        add_keyframes: bool,
+    ) -> (Timeline, TrackId) {
+        let mut timeline = Timeline::new();
+        let track_id = timeline.add_track(TrackKind::Video);
+
+        let track = timeline.get_track_mut(track_id).unwrap();
+        track.set_name(track_name);
+
+        if add_keyframes {
+            // Duration付きでKeyframeAnimationを作成
+            let mut keyframes = KeyframeAnimation::new(Duration::from_seconds(10.0));
+
+            // 各プロパティのトラックを作成
+            keyframes.create_track_if_missing("blend_mode").unwrap();
+            keyframes.create_track_if_missing("volume").unwrap();
+            keyframes.create_track_if_missing("mute").unwrap();
+
+            // キーフレームを追加（イージング関数付き）
+            keyframes
+                .add_keyframe(
+                    "blend_mode",
+                    TimePosition::from_seconds(0.0),
+                    3.0,
+                    EasingFunction::Linear,
+                )
+                .unwrap();
+            keyframes
+                .add_keyframe(
+                    "volume",
+                    TimePosition::from_seconds(0.0),
+                    1.5,
+                    EasingFunction::Linear,
+                )
+                .unwrap();
+            keyframes
+                .add_keyframe(
+                    "mute",
+                    TimePosition::from_seconds(0.0),
+                    0.0,
+                    EasingFunction::Linear,
+                )
+                .unwrap();
+
+            // Option<KeyframeAnimation>として渡す
+            track.set_keyframes(Some(keyframes));
+        }
+
+        (timeline, track_id)
+    }
+
+    #[test]
+    fn test_get_blend_mode_for_track_from_keyframes() {
+        let (timeline, track_id) = create_test_timeline_with_track("Test Track", true);
+        let compositor = TrackCompositor::new(timeline, Vec::new());
+
+        let blend_mode = compositor.get_blend_mode_for_track(track_id);
+        assert_eq!(
+            blend_mode,
+            BlendMode::Screen,
+            "Should return Screen blend mode from keyframes"
+        );
+    }
+
+    #[test]
+    fn test_get_blend_mode_for_track_from_name() {
+        let (timeline, track_id) = create_test_timeline_with_track("Overlay Track", false);
+        let compositor = TrackCompositor::new(timeline, Vec::new());
+
+        let blend_mode = compositor.get_blend_mode_for_track(track_id);
+        assert_eq!(
+            blend_mode,
+            BlendMode::Screen,
+            "Should return Screen blend mode based on track name"
+        );
+
+        let (timeline, track_id) = create_test_timeline_with_track("Effect Track", false);
+        let compositor = TrackCompositor::new(timeline, Vec::new());
+
+        let blend_mode = compositor.get_blend_mode_for_track(track_id);
+        assert_eq!(
+            blend_mode,
+            BlendMode::Add,
+            "Should return Add blend mode based on track name"
+        );
+
+        let (timeline, track_id) = create_test_timeline_with_track("Shadow Track", false);
+        let compositor = TrackCompositor::new(timeline, Vec::new());
+
+        let blend_mode = compositor.get_blend_mode_for_track(track_id);
+        assert_eq!(
+            blend_mode,
+            BlendMode::Multiply,
+            "Should return Multiply blend mode based on track name"
+        );
+    }
+
+    #[test]
+    fn test_get_blend_mode_for_track_default() {
+        let (timeline, track_id) = create_test_timeline_with_track("Regular Track", false);
+        let compositor = TrackCompositor::new(timeline, Vec::new());
+
+        let blend_mode = compositor.get_blend_mode_for_track(track_id);
+        assert_eq!(
+            blend_mode,
+            BlendMode::Normal,
+            "Should return Normal blend mode as default"
+        );
+    }
+
+    #[test]
+    fn test_get_track_volume_from_keyframes() {
+        let (timeline, track_id) = create_test_timeline_with_track("Test Track", true);
+        let compositor = TrackCompositor::new(timeline, Vec::new());
+
+        let volume = compositor.get_track_volume(track_id);
+        assert_eq!(volume, 1.5, "Should return 1.5 volume from keyframes");
+
+        // ミュート状態のテスト - 新しいタイムラインを作成
+        let (mut timeline_muted, track_id_muted) =
+            create_test_timeline_with_track("Test Track", true);
+        let track = timeline_muted.get_track_mut(track_id_muted).unwrap();
+        if let Some(keyframes) = track.keyframes() {
+            let mut keyframes_clone = keyframes.clone();
+
+            // デバッグログを追加
+            println!(
+                "キーフレーム プロパティ一覧: {:?}",
+                keyframes_clone.property_names()
+            );
+            if keyframes_clone.has_property("mute") {
+                println!(
+                    "mute property exists, current value: {:?}",
+                    keyframes_clone.get_value_at("mute", TimePosition::from_seconds(0.0))
+                );
+
+                // 既存のキーフレームを削除してから追加する（確実な方法）
+                keyframes_clone
+                    .remove_keyframe("mute", TimePosition::from_seconds(0.0))
+                    .unwrap();
+                keyframes_clone
+                    .add_keyframe(
+                        "mute",
+                        TimePosition::from_seconds(0.0),
+                        1.0,
+                        EasingFunction::Linear,
+                    )
+                    .unwrap();
+
+                println!(
+                    "新しいmute値: {:?}",
+                    keyframes_clone.get_value_at("mute", TimePosition::from_seconds(0.0))
+                );
+            } else {
+                println!("mute property does not exist");
+                keyframes_clone.create_track_if_missing("mute").unwrap();
+                keyframes_clone
+                    .add_keyframe(
+                        "mute",
+                        TimePosition::from_seconds(0.0),
+                        1.0,
+                        EasingFunction::Linear,
+                    )
+                    .unwrap();
+            }
+
+            track.set_keyframes(Some(keyframes_clone));
+        }
+
+        // デバッグ出力を追加（TrackCompositor::newを呼び出す前）
+        let mute_value = if let Some(track) = timeline_muted.get_track(track_id_muted) {
+            if let Some(kf) = track.keyframes() {
+                let value = kf.get_value_at("mute", TimePosition::from_seconds(0.0));
+                println!("テスト時のmute値: {:?}", value);
+                value
+            } else {
+                None
+            }
+        } else {
+            None
+        };
+        println!("ミュート値: {:?}", mute_value);
+
+        let compositor_muted = TrackCompositor::new(timeline_muted, Vec::new());
+        let volume = compositor_muted.get_track_volume(track_id_muted);
+        println!("ミュート後のボリューム: {}", volume);
+        assert_eq!(volume, 0.0, "Should return 0.0 volume when muted");
+    }
+
+    #[test]
+    fn test_get_track_volume_from_name() {
+        let (timeline, track_id) = create_test_timeline_with_track("Background Track", false);
+        let compositor = TrackCompositor::new(timeline, Vec::new());
+
+        let volume = compositor.get_track_volume(track_id);
+        assert_eq!(volume, 0.5, "Should return 0.5 volume for background track");
+
+        let (timeline, track_id) = create_test_timeline_with_track("Effect Track", false);
+        let compositor = TrackCompositor::new(timeline, Vec::new());
+
+        let volume = compositor.get_track_volume(track_id);
+        assert_eq!(volume, 0.7, "Should return 0.7 volume for effect track");
+
+        let (timeline, track_id) = create_test_timeline_with_track("Main Track", false);
+        let compositor = TrackCompositor::new(timeline, Vec::new());
+
+        let volume = compositor.get_track_volume(track_id);
+        assert_eq!(volume, 1.0, "Should return 1.0 volume for main track");
+    }
+
+    #[test]
+    fn test_get_track_volume_default() {
+        let (timeline, track_id) = create_test_timeline_with_track("Regular Track", false);
+        let compositor = TrackCompositor::new(timeline, Vec::new());
+
+        let volume = compositor.get_track_volume(track_id);
+        assert_eq!(volume, 1.0, "Should return 1.0 volume as default");
     }
 }

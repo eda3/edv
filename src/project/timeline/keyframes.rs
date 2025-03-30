@@ -558,6 +558,67 @@ impl KeyframeAnimation {
     pub fn clear(&mut self) {
         self.tracks.clear();
     }
+
+    /// 特定のプロパティに対するキーフレームトラックを追加または取得
+    ///
+    /// プロパティが存在しない場合は新しいトラックを作成します。
+    ///
+    /// # Arguments
+    ///
+    /// * `property` - プロパティ名
+    ///
+    /// # Returns
+    ///
+    /// `&mut KeyframeTrack` - キーフレームトラックへの可変参照
+    pub fn get_or_create_track(&mut self, property: &str) -> &mut KeyframeTrack {
+        self.tracks
+            .entry(property.to_string())
+            .or_insert_with(|| KeyframeTrack::new(property.to_string()))
+    }
+
+    /// キーフレームを削除
+    ///
+    /// # Arguments
+    ///
+    /// * `property` - プロパティ名
+    /// * `time` - キーフレームの時間位置
+    ///
+    /// # Returns
+    ///
+    /// `Result<(), KeyframeError>` - 成功した場合はOk、失敗した場合はエラー
+    pub fn remove_keyframe(&mut self, property: &str, time: TimePosition) -> Result<()> {
+        if let Some(track) = self.get_track_mut(property) {
+            track.remove_keyframe(time)
+        } else {
+            Err(KeyframeError::PropertyNotFound(property.to_string()))
+        }
+    }
+
+    /// 特定のプロパティのキーフレームトラックが存在するかどうかを確認
+    ///
+    /// # Arguments
+    ///
+    /// * `property` - 確認するプロパティ名
+    ///
+    /// # Returns
+    ///
+    /// `bool` - プロパティのキーフレームトラックが存在する場合はtrue、それ以外はfalse
+    #[must_use]
+    pub fn has_property(&self, property: &str) -> bool {
+        self.tracks.contains_key(property)
+    }
+
+    /// すべてのキーフレームトラックを取得
+    #[must_use]
+    pub fn tracks(&self) -> &HashMap<String, KeyframeTrack> {
+        &self.tracks
+    }
+
+    /// すべてのプロパティ名を取得
+    #[must_use]
+    pub fn property_names(&self) -> Vec<&str> {
+        self.tracks.keys().map(|k| k.as_str()).collect()
+    }
 }
 
 #[cfg(test)]
