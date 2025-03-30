@@ -7,23 +7,21 @@ This document outlines the unit testing approach for the edv project, focusing o
 Unit tests form the foundation of the testing pyramid and focus on testing individual components in isolation:
 
 - **Scope**: Individual functions, methods, and structs
-- **Isolation**: Mock dependencies to test components in isolation
+- **Isolation**: Test components in isolation where possible
 - **Coverage**: Aim for >80% code coverage with unit tests
-- **Location**: Co-located with implementation code in `src/` directory
+- **Location**: Co-located with implementation code using Rust's module tests
 
 ## Implementation Approach
 
 ### Testing Structure
 
-Unit tests in the edv project follow Rust's standard testing approach:
+Unit tests in the edv project follow Rust's standard testing approach with tests in the same file as the implementation:
 
 ```rust
 // In the same file as the implementation
 #[cfg(test)]
 mod tests {
     use super::*;
-    use mockall::predicate::*;
-    use mockall::*;
     
     #[test]
     fn test_function_name() {
@@ -32,429 +30,302 @@ mod tests {
 }
 ```
 
-### Mocking Strategy
+### Actual Examples
 
-For components with external dependencies, we use `mockall` to create mock implementations:
+Here are examples of unit tests from the current codebase:
+
+#### Time Utilities Testing
 
 ```rust
-// Mock FFmpeg wrapper for testing
-mock! {
-    FfmpegWrapper {
-        fn run_command(&self, command: FfmpegCommand, progress: Option<ProgressBar>) -> Result<()>;
-        fn get_media_info(&self, path: &Path) -> Result<MediaInfo>;
+// From src/utility/time.rs
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_duration_from_seconds() {
+        let d = Duration::from_seconds(5.0);
+        assert_eq!(d.as_seconds(), 5.0);
+    }
+
+    #[test]
+    fn test_duration_from_millis() {
+        let d = Duration::from_millis(5000.0);
+        assert_eq!(d.as_seconds(), 5.0);
+    }
+
+    #[test]
+    fn test_duration_from_frames() {
+        let d = Duration::from_frames(120.0, 24.0);
+        assert_eq!(d.as_seconds(), 5.0);
+    }
+
+    #[test]
+    fn test_duration_to_timecode() {
+        let d = Duration::from_seconds(3661.5); // 1h 1m 1s 12f @ 24fps
+        assert_eq!(d.to_timecode(24.0), "01:01:01:12");
+    }
+}
+```
+
+#### CLI Argument Parsing
+
+```rust
+// From src/cli/args.rs
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_required_arg() {
+        let args = vec!["command".to_string(), "value".to_string()];
+
+        // Argument exists
+        let result = required_arg(&args, 1, "test");
+        assert!(result.is_ok());
+        assert_eq!(result.unwrap(), "value");
+
+        // Argument missing
+        let result = required_arg(&args, 2, "missing");
+        assert!(result.is_err());
+        match result {
+            Err(Error::MissingArgument(name)) => assert_eq!(name, "missing"),
+            _ => panic!("Expected MissingArgument error"),
+        }
+    }
+
+    #[test]
+    fn test_parse_required_arg() {
+        let args = vec![
+            "command".to_string(),
+            "123".to_string(),
+            "invalid".to_string(),
+        ];
+
+        // Valid parsing
+        let result: Result<i32> = parse_required_arg(&args, 1, "number");
+        assert!(result.is_ok());
+        assert_eq!(result.unwrap(), 123);
+
+        // Invalid parsing
+        let result: Result<i32> = parse_required_arg(&args, 2, "number");
+        assert!(result.is_err());
+        match result {
+            Err(Error::InvalidArgument(_)) => {}
+            _ => panic!("Expected InvalidArgument error"),
+        }
+    }
+}
+```
+
+#### Audio Processing Tests
+
+```rust
+// From src/audio/mod.rs
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_is_supported_format() {
+        assert!(common::is_supported_format("mp3"));
+        assert!(common::is_supported_format("MP3"));
+        assert!(common::is_supported_format("wav"));
+        assert!(!common::is_supported_format("xyz"));
+    }
+
+    #[test]
+    fn test_db_to_linear() {
+        assert!((common::db_to_linear(0.0) - 1.0).abs() < 1e-10);
+        assert!((common::db_to_linear(6.0) - 1.9952623149688797).abs() < 1e-10);
+        assert!((common::db_to_linear(-6.0) - 0.501187233627272).abs() < 1e-10);
+    }
+}
+```
+
+#### Command Registry Tests
+
+```rust
+// From src/cli/commands.rs
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// Mock command for testing
+    #[derive(Debug)]
+    struct MockCommand {
+        name: String,
+        description: String,
+        usage: String,
+    }
+
+    impl Command for MockCommand {
+        fn name(&self) -> &str {
+            &self.name
+        }
+
+        fn description(&self) -> &str {
+            &self.description
+        }
+
+        fn usage(&self) -> &str {
+            &self.usage
+        }
+
+        fn execute(&self, _context: &Context, _args: &[String]) -> Result<()> {
+            // Mock implementation that does nothing
+            Ok(())
+        }
+    }
+
+    #[test]
+    fn test_register_and_get_command() {
+        let mut registry = CommandRegistry::new();
+        let command = MockCommand::new("test", "Test command", "test --arg value");
+        let command_name = command.name().to_string();
+
+        // Register the command
+        registry.register(Box::new(command)).unwrap();
+
+        // Verify command is in registry
+        assert!(registry.has_command(&command_name));
+        assert_eq!(registry.command_count(), 1);
+
+        // Get the command
+        let cmd = registry.get(&command_name).unwrap();
+        assert_eq!(cmd.name(), "test");
+        assert_eq!(cmd.description(), "Test command");
+        assert_eq!(cmd.usage(), "test --arg value");
     }
 }
 ```
 
 ### Test Data Management
 
-- Use small, representative test fixtures when needed
-- Prefer in-memory data when possible for faster tests
+For unit tests:
+
+- Use simple, inline test data when possible
+- Keep test files separate if needed
 - Use deterministic test data to ensure consistent results
 
-## Key Unit Testing Areas
+## Key Unit Testing Areas Currently Implemented
 
-### 1. Core Module
+### 1. Core/Utility Components
 
-The Core module tests focus on the central functionality:
+The time utilities and other foundational components have effective unit tests:
 
-- **Configuration Management**:
-  - Test loading configuration from different sources
-  - Validate configuration constraints and defaults
-  - Test error handling for invalid configurations
+- **Time Handling**:
+  - Test duration and time position calculations
+  - Validate time format conversions
+  - Test timecode generation and parsing
 
 - **Error Handling**:
-  - Ensure error types correctly propagate information
-  - Test error conversion and context enrichment
-  - Validate error formatting and user-facing messages
-
-- **Execution Context**:
-  - Test context creation and resource management
-  - Validate temporary directory handling
-  - Test context cleanup and resource disposal
+  - Test error propagation and context
+  - Validate error formatting
 
 ### 2. CLI Module
 
-The CLI module tests focus on user interaction:
+The CLI module has good test coverage for:
 
 - **Command Argument Parsing**:
   - Test parsing of valid command arguments
   - Validate error handling for invalid arguments
   - Test handling of optional and required parameters
 
-- **Help Text Generation**:
-  - Ensure help text is correctly formatted
-  - Test command-specific help generation
-  - Validate global help text formatting
+- **Command Registration**:
+  - Test command registry mechanisms
+  - Validate command lookup and management
 
-- **Command Registration and Execution**:
-  - Test command registration mechanisms
-  - Validate command lookup and selection
-  - Test command execution workflow
+### 3. FFmpeg Integration
 
-### 3. Processing Module
+The FFmpeg integration has tests for:
 
-The Processing module tests focus on video operations:
+- **Version Detection**:
+  - Test version string parsing
+  - Validate version compatibility checks
 
-- **FFmpeg Command Generation**:
-  - Test building of FFmpeg command lines
-  - Validate parameter escaping and formatting
-  - Test complex filter graph generation
+- **Command Building**:
+  - Basic command generation tests
+  - Parameter validation
 
-- **Ownership and Borrowing**:
-  - Test method chaining using mutable references
-  - Validate proper memory management in long-lived operations
-  - Test string lifetime handling in command arguments
-  - Ensure cloneable command structures work correctly
-  - Verify that multiple commands can be created from templates
+### 4. Audio Processing
 
-- **Operation Validation**:
-  - Test validation of operation parameters
-  - Ensure invalid parameters are rejected
-  - Test boundary conditions and edge cases
+The audio module includes tests for:
 
-- **Execution Plan Creation**:
-  - Test execution plan generation
-  - Validate step ordering and dependencies
-  - Test plan optimization
+- **Format Support**:
+  - Test audio format detection
+  - Validate format support checks
 
-### 4. Project Module
+- **Audio Conversion**:
+  - Test decibel/linear conversion
+  - Validate volume normalization
 
-The Project module tests focus on project management:
+### 5. Subtitle Processing
 
-- **Timeline Operations**:
-  - Test track and clip management
-  - Validate timeline editing operations
-  - Test timeline state consistency
-
-- **Edit History Management**:
-  - Test undo/redo functionality
-  - Validate history state management
-  - Test history pruning and cleanup
-
-- **Project Serialization/Deserialization**:
-  - Test saving and loading projects
-  - Validate format compatibility
-  - Test error handling during serialization
-
-### 5. Asset Module
-
-The Asset module tests focus on media asset management:
-
-- **Metadata Extraction**:
-  - Test media information parsing
-  - Validate handling of different file formats
-  - Test error handling for corrupt files
-
-- **Asset Management**:
-  - Test asset tracking and lookup
-  - Validate asset registration and removal
-  - Test asset collection operations
-
-- **Proxy Generation**:
-  - Test proxy creation workflows
-  - Validate proxy quality and size
-  - Test proxy management and cleanup
-
-### 6. Utility Module
-
-The Utility module tests focus on shared utilities:
-
-- **Time Code Parsing and Formatting**:
-  - Test parsing of different time formats
-  - Validate time code conversions
-  - Test boundary conditions (e.g., very large times)
-
-- **Filesystem Operations**:
-  - Test file and directory operations
-  - Validate path handling and normalization
-  - Test error handling for filesystem operations
-
-- **Format Detection and Conversion**:
-  - Test format identification from file extensions
-  - Validate format compatibility checking
-  - Test format conversion logic
-
-### 7. Subtitle Module
-
-The Subtitle module tests focus on subtitle handling:
+The subtitle module includes tests for:
 
 - **Subtitle Parsing**:
-  - Test parsing of different subtitle formats (SRT, WebVTT)
-  - Validate handling of different time formats
-  - Test error handling for malformed subtitle files
+  - Test parsing different subtitle formats
+  - Validate handling of malformed subtitle files
 
-- **Subtitle Track Management**:
-  - Test adding, removing, and modifying subtitles
-  - Validate track state consistency
-  - Test subtitle overlap detection and resolution
+## Testing Conventions
 
-- **Ownership and Borrowing**:
-  - Test proper collection iteration patterns
-  - Validate mutable reference handling
-  - Test borrowing conflicts resolution strategies
-  - Ensure safe mutable and immutable access to subtitles
-  - Verify iterator safety with complex operations
+### Naming Conventions
 
-- **Subtitle Rendering**:
-  - Test subtitle rendering to different formats
-  - Validate style application
-  - Test time code conversion between formats
+Unit tests follow a consistent naming pattern:
 
-## Testing for Rust-Specific Concerns
-
-### Ownership and Reference Testing
-
-When testing Rust code, particular attention should be paid to ownership and borrowing patterns:
-
-#### 1. Method Chaining Tests
-
-```rust
-#[test]
-fn test_command_builder_method_chaining() {
-    let mut cmd = FFmpegCommand::new(ffmpeg);
-    
-    // Test that method chaining with mutable references works
-    cmd.input("input.mp4")
-       .output_options(&["-c:v", "libx264"])
-       .output("output.mp4");
-       
-    // Test that we can still use cmd after chaining
-    assert_eq!(cmd.inputs.len(), 1);
-    assert_eq!(cmd.output.as_ref().unwrap().to_str().unwrap(), "output.mp4");
-}
+```
+test_<function_name>_<scenario>
 ```
 
-#### 2. Temporary Value Lifetime Tests
+For example:
+- `test_parse_required_arg` - Tests the `parse_required_arg` function
+- `test_duration_from_seconds` - Tests the `from_seconds` constructor of `Duration`
 
-```rust
-#[test]
-fn test_string_argument_lifetimes() {
-    let mut cmd = FFmpegCommand::new(ffmpeg);
-    
-    // Test with owned strings in a collection
-    let options = vec![
-        "-c:a".to_string(),
-        "aac".to_string(),
-        "-b:a".to_string(),
-        "128k".to_string()
-    ];
-    
-    cmd.output_options(&options);
-    
-    // Verify the options were captured correctly
-    assert!(cmd.output_options.contains(&"aac".to_string()));
-}
-```
+### Assertion Patterns
 
-#### 3. Mutable Borrowing Tests
+Tests use clear assertion patterns:
 
-```rust
-#[test]
-fn test_subtitle_track_borrowing() {
-    let mut track = SubtitleTrack::new();
-    
-    // Add some subtitles
-    track.add_subtitle(create_test_subtitle("1", 0.0, 2.0));
-    track.add_subtitle(create_test_subtitle("2", 3.0, 5.0));
-    
-    // Test safe iteration patterns
-    let ids = track.get_subtitle_ids();
-    assert_eq!(ids.len(), 2);
-    
-    // Test mutable access after collecting IDs
-    for id in &ids {
-        if let Some(subtitle) = track.get_subtitle_mut(id) {
-            subtitle.set_text("Modified");
-        }
-    }
-    
-    // Verify modifications
-    for id in &ids {
-        assert_eq!(track.get_subtitle(id).unwrap().get_text(), "Modified");
-    }
-}
-```
+- Use `assert!`, `assert_eq!`, and `assert_ne!` for most cases
+- Use pattern matching for error validation
+- Include helpful error messages for failed assertions
 
-#### 4. Clone and Template Tests
+## Implementation Status and Next Steps
 
-```rust
-#[test]
-fn test_command_template_pattern() {
-    let template = FFmpegCommand::new(ffmpeg)
-        .input("input.mp4");
-    
-    // Create different commands from the same template
-    let mut cmd1 = template.clone();
-    cmd1.output("output1.mp4");
-    
-    let mut cmd2 = template.clone();
-    cmd2.output("output2.mp4");
-    
-    // Verify they have the same input but different outputs
-    assert_eq!(cmd1.inputs.len(), 1);
-    assert_eq!(cmd2.inputs.len(), 1);
-    assert_eq!(cmd1.output.as_ref().unwrap().to_str().unwrap(), "output1.mp4");
-    assert_eq!(cmd2.output.as_ref().unwrap().to_str().unwrap(), "output2.mp4");
-}
-```
+### Current Coverage
 
-These tests help ensure that the code correctly handles Rust's ownership and borrowing rules, preventing bugs that might only manifest at runtime in less strict languages.
+As of March 2024:
 
-## Best Practices for Unit Testing
+- **Time Utilities**: ~90% coverage
+- **CLI Argument Parsing**: ~85% coverage
+- **FFmpeg Integration**: ~70% coverage
+- **Audio Module**: ~60% coverage
+- **Subtitle Module**: ~50% coverage
 
-1. **Test One Thing Per Test**: Each test should verify a single behavior
-2. **Descriptive Test Names**: Name tests clearly to describe what they're testing
-3. **Arrange-Act-Assert**: Structure tests with clear setup, action, and verification
-4. **Minimize Test Dependencies**: Tests should not depend on external state
-5. **Test Edge Cases**: Include tests for boundary conditions and error paths
-6. **Keep Tests Fast**: Unit tests should execute quickly for rapid feedback
-7. **Avoid Test Logic**: Minimize conditional logic in test code
-8. **Test Public Interfaces**: Focus on testing the public API of components
+### Focus Areas for Improvement
 
-## Example Unit Test
+1. **FFmpeg Command Builder**:
+   - More comprehensive testing of command generation
+   - Testing complex filter graph creation
+   - Testing error conditions and edge cases
 
-```rust
-#[test]
-fn test_trim_operation_validation() {
-    // Arrange: Set up test data
-    let input_path = Path::new("test_input.mp4");
-    let output_path = Path::new("test_output.mp4");
-    
-    // Test case 1: Invalid start time (negative)
-    let op = TrimOperation::new(
-        input_path, 
-        output_path,
-        Some(TimePosition::from_seconds(-10.0)),
-        Some(TimePosition::from_seconds(30.0)),
-        false,
-    );
-    
-    // Act & Assert
-    assert!(op.validate().is_err());
-    
-    // Test case 2: Valid parameters
-    let op = TrimOperation::new(
-        input_path, 
-        output_path,
-        Some(TimePosition::from_seconds(10.0)),
-        Some(TimePosition::from_seconds(30.0)),
-        false,
-    );
-    
-    // Act & Assert
-    assert!(op.validate().is_ok());
-}
-```
+2. **Advanced CLI Features**:
+   - Testing complex command composition
+   - Testing help generation and display
+   - More interactive command testing
 
-This comprehensive unit testing approach ensures that each component of the edv project functions correctly in isolation, providing a solid foundation for higher-level testing. 
+3. **Error Recovery**:
+   - Testing more error scenarios
+   - Validating error message formatting
+   - Testing error context and propagation
 
-## Implementation Status Update (2024)
+### Testing Tools and Utilities
 
-As of March 2024, the unit testing implementation has progressed substantially across the edv project modules:
+The following tools are used for unit testing:
 
-### Unit Testing Status by Module
+- **Rust's built-in testing framework**: For running tests
+- **assert_* macros**: For validating test conditions
 
-| Module | Test Coverage | Status | Notable Test Patterns |
-|--------|---------------|--------|----------------------|
-| Core | 95% | ✅ Complete | Configuration loading, error propagation |
-| CLI | 90% | ✅ Complete | Command registration, argument parsing |
-| Processing | 85% | ✅ Complete | Command builder, FFmpeg parameter handling |
-| Audio | 90% | ✅ Complete | Volume adjustment, fade calculations |
-| Subtitle | 88% | ✅ Complete | Format parsing, timing calculations |
-| Project | 55% | 🔄 In Progress | Timeline operations, serialization |
-| Asset | 45% | 🔄 In Progress | Metadata extraction, asset registration |
-| Utility | 93% | ✅ Complete | Time code parsing, file operations |
+## Conclusion
 
-### Notable Unit Testing Achievements
-
-1. **FFmpeg Command Builder Testing**
-   - Implemented comprehensive tests for the command building API
-   - Created specialized tests for method chaining patterns
-   - Verified proper string lifetime management in command construction
-   - Tested template-based command creation patterns
-
-   Example of successful ownership pattern testing:
-   ```rust
-   #[test]
-   fn test_command_builder_ownership() {
-       let mut cmd = FFmpegCommand::new(ffmpeg);
-       
-       // Verify &mut self method chaining works correctly
-       assert_eq!(cmd.input("input.mp4").output_options(&["-c:v", "libx264"]), &mut cmd);
-       
-       // Verify options are correctly captured
-       assert_eq!(cmd.output_options, vec!["-c:v".to_string(), "libx264".to_string()]);
-   }
-   ```
-
-2. **Time Utility Coverage**
-   - Achieved near-complete coverage of time parsing and formatting
-   - Tested time code conversion across multiple formats
-   - Implemented extensive boundary testing for time calculations
-   - Validated duration arithmetic operations
-
-3. **Error Handling Tests**
-   - Implemented tests for all error variants
-   - Verified proper error propagation across module boundaries
-   - Tested context enrichment for error messages
-   - Validated error recovery patterns
-
-### Focus Areas for Unit Testing Improvement
-
-1. **Project Module Testing**
-   - The Project module (currently at 55% test coverage) needs additional tests for:
-     - Timeline multi-track operations
-     - Project state consistency verification
-     - Undo/redo operation chains
-     - Project serialization edge cases
-
-2. **Asset Module Testing**
-   - The Asset module (currently at 45% test coverage) needs additional tests for:
-     - Metadata extraction from various file types
-     - Asset caching mechanisms
-     - Proxy generation workflows
-     - Asset lifecycle management
-
-3. **Mock Implementation Refinement**
-   - Enhancing mock implementations of external dependencies
-   - Creating more sophisticated FFmpeg mocks for specific test scenarios
-   - Implementing recording mocks for interaction verification
-
-### Successful Testing Patterns
-
-Several testing patterns have proven particularly effective:
-
-1. **Builder Pattern Testing**
-   - Using dedicated tests for builder pattern APIs
-   - Verifying method chaining works correctly
-   - Testing both successful and error cases
-
-2. **Parametric Tests**
-   - Using Rust's test parameterization for testing multiple scenarios
-   - Creating tables of test cases for boundary testing
-   - Reusing test logic across similar cases
-
-   ```rust
-   #[test]
-   fn test_time_position_parsing() {
-       let test_cases = vec![
-           ("00:00:10", 10.0),
-           ("01:30:00", 5400.0),
-           ("00:01:30.5", 90.5),
-           // More test cases...
-       ];
-       
-       for (input, expected) in test_cases {
-           let result = TimePosition::from_string(input).unwrap();
-           assert_eq!(result.as_seconds(), expected);
-       }
-   }
-   ```
-
-3. **State Verification Tests**
-   - Testing state transitions in stateful components
-   - Verifying consistency of internal state after operations
-   - Testing recovery from invalid states
-
-The unit testing strategy continues to evolve with the project, with ongoing focus on maintaining high coverage while supporting the development of new features and modules. 
+Unit testing forms the foundation of the testing strategy for the edv project. By focusing on thorough testing of individual components, we can ensure that the building blocks of the application are solid, which simplifies integration and system testing. 

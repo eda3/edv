@@ -4,820 +4,336 @@ This document provides detailed implementation guidelines for the Project module
 
 ## Overview
 
-The Project module manages the video editing project data structure, including timeline editing, clip management, project serialization/deserialization, and edit history tracking. It provides a comprehensive framework for non-linear video editing in a CLI environment.
+The Project module is the central component responsible for managing video editing project data. This includes:
+- Defining the main `Project` structure.
+- Handling project metadata (name, creation/modification dates, etc.).
+- Managing project assets (video, audio, image files).
+- Providing the core `Timeline` data structure and editing functionalities (tracks, clips, relationships, history).
+- Implementing project serialization (saving/loading) in JSON format.
+- Coordinating the rendering process for the project timeline.
 
 ## Structure
 
+The Project module is organized as follows:
+
 ```
 src/project/
-├── mod.rs                 // Module exports
-├── project.rs             // Core project management
-├── timeline/              // Timeline data structures
-│   ├── mod.rs             // Timeline exports
-│   ├── timeline.rs        // Timeline implementation
-│   ├── track.rs           // Track implementation
-│   └── clip.rs            // Clip implementation
-├── history/               // Edit history management
-│   ├── mod.rs             // History exports
-│   ├── action.rs          // Edit action implementation
-│   └── history.rs         // History tracking
-├── serialization/         // Project file format
-│   ├── mod.rs             // Serialization exports
-│   ├── json.rs            // JSON serializer/deserializer
-│   └── binary.rs          // Binary serializer/deserializer
-├── operations/            // Project operations
-│   ├── mod.rs             // Operations exports
-│   ├── clip_ops.rs        // Clip operations
-│   ├── track_ops.rs       // Track operations
-│   └── transition_ops.rs  // Transition operations
-└── utils/                 // Project-specific utilities
-    ├── mod.rs             // Utility exports
-    ├── validation.rs      // Project validation
-    └── optimizer.rs       // Timeline optimization
+├── mod.rs             # Module exports, Project struct, Asset*, ProjectMetadata, ProjectId, ProjectError
+├── timeline/          # Timeline editing functionality
+│   ├── mod.rs         # Timeline, Track, Clip structs, core editing methods (add/remove/split/merge/move)
+│   ├── multi_track.rs # MultiTrackManager, TrackRelationship, dependency management
+│   └── history.rs     # EditHistory, EditAction, TransactionGroup, undo/redo logic
+├── rendering/         # Project rendering functionality
+│   ├── mod.rs         # Rendering module exports, RenderError
+│   ├── config.rs      # RenderConfig, VideoCodec, AudioCodec, OutputFormat
+│   ├── compositor.rs  # TrackCompositor, track preparation and composition logic (using FFmpeg placeholders)
+│   ├── pipeline.rs    # RenderPipeline, RenderResult, sync/async rendering execution
+│   └── progress.rs    # RenderProgress, RenderStage, SharedProgressTracker
+└── serialization/     # Project serialization functionality
+    ├── mod.rs         # Serialization module exports
+    └── json.rs        # JSON serializer/deserializer, Serialized* structs
 ```
+
+**Note:** Asset management types (`AssetId`, `AssetReference`, `AssetMetadata`) are defined within `src/project/mod.rs`, not in a separate `asset` module.
 
 ## Key Components
 
-### Project Manager (project.rs)
+### Project Structure (`mod.rs`)
 
-The central component for managing video editing projects:
+The core `Project` struct holds all project-related data:
 
 ```rust
 pub struct Project {
-    /// Unique project identifier
-    pub id: ProjectId,
-    /// Project metadata
-    pub metadata: ProjectMetadata,
-    /// Timeline data
-    pub timeline: Timeline,
-    /// Assets used in the project
+    /// Name of the project (also in project_metadata.name).
+    pub name: String,
+    /// Timeline of the project.
+    pub timeline: timeline::Timeline,
+    /// Assets used in the project.
     pub assets: Vec<AssetReference>,
-    /// Edit history
-    pub history: EditHistory,
-    /// Project settings
-    pub settings: ProjectSettings,
+    /// Additional metadata (currently unused, consider removing or integrating with ProjectMetadata).
+    pub metadata: std::collections::HashMap<String, String>,
+    /// Project metadata (name, timestamps, description, tags).
+    pub project_metadata: ProjectMetadata,
 }
 
 impl Project {
-    /// Create a new empty project
-    pub fn new(name: &str) -> Self {
-        let id = ProjectId::new();
-        let now = Utc::now();
-        
-        Self {
-            id,
-            metadata: ProjectMetadata {
-                name: name.to_string(),
-                created_at: now,
-                modified_at: now,
-                description: String::new(),
-                tags: Vec::new(),
-            },
-            timeline: Timeline::new(),
-            assets: Vec::new(),
-            history: EditHistory::new(),
-            settings: ProjectSettings::default(),
-        }
-    }
-    
-    /// Save project to file
-    pub fn save(&self, path: &Path) -> Result<()> {
-        // Serialize project and save to file
-        let serializer = match self.settings.serialization_format {
-            SerializationFormat::Json => JsonSerializer::new(),
-            SerializationFormat::Binary => BinarySerializer::new(),
-        };
-        
-        serializer.serialize(self, path)
-    }
-    
-    /// Load project from file
-    pub fn load(path: &Path) -> Result<Self> {
-        // Determine format from file extension
-        let format = SerializationFormat::from_path(path)?;
-        
-        // Deserialize project from file
-        let deserializer = match format {
-            SerializationFormat::Json => JsonDeserializer::new(),
-            SerializationFormat::Binary => BinaryDeserializer::new(),
-        };
-        
-        deserializer.deserialize(path)
-    }
-    
-    /// Add asset to project
-    pub fn add_asset(&mut self, asset: &Asset) -> Result<AssetId> {
-        let asset_ref = AssetReference {
-            id: asset.id,
-            path: asset.path.clone(),
-            metadata: asset.metadata.clone(),
-        };
-        
-        if self.assets.iter().any(|a| a.id == asset.id) {
-            return Err(Error::DuplicateAsset(asset.id));
-        }
-        
-        self.assets.push(asset_ref);
-        self.record_history_action(HistoryAction::AddAsset(asset.id));
-        Ok(asset.id)
-    }
-    
-    /// Remove asset from project
-    pub fn remove_asset(&mut self, asset_id: AssetId) -> Result<()> {
-        // Check if asset is used in timeline
-        if self.timeline.is_asset_used(asset_id) {
-            return Err(Error::AssetInUse(asset_id));
-        }
-        
-        let idx = self.assets.iter()
-            .position(|a| a.id == asset_id)
-            .ok_or(Error::AssetNotFound(asset_id))?;
-            
-        self.assets.remove(idx);
-        self.record_history_action(HistoryAction::RemoveAsset(asset_id));
-        Ok(())
-    }
-    
-    /// Access the timeline
-    pub fn timeline(&mut self) -> &mut Timeline {
-        &mut self.timeline
-    }
-    
-    /// Undo last operation
-    pub fn undo(&mut self) -> Result<()> {
-        self.history.undo(self)
-    }
-    
-    /// Redo previously undone operation
-    pub fn redo(&mut self) -> Result<()> {
-        self.history.redo(self)
-    }
-    
-    /// Record action in history
-    fn record_history_action(&mut self, action: HistoryAction) {
-        self.history.record(action);
-        self.metadata.modified_at = Utc::now();
-    }
+    /// Creates a new empty project with the given name.
+    pub fn new(name: &str) -> Self { /* ... */ }
+
+    /// Adds an asset (represented by its path and metadata) to the project.
+    /// Returns the newly generated AssetId.
+    pub fn add_asset(&mut self, path: PathBuf, metadata: AssetMetadata) -> AssetId { /* ... */ }
+
+    /// Gets an immutable reference to an asset by its ID.
+    pub fn get_asset(&self, id: AssetId) -> Option<&AssetReference> { /* ... */ }
+
+    /// Gets a mutable reference to an asset by its ID.
+    pub fn get_asset_mut(&mut self, id: AssetId) -> Option<&mut AssetReference> { /* ... */ }
+
+    /// Removes an asset from the project by its ID.
+    /// Returns `Ok(())` or `ProjectError::AssetNotFound`.
+    pub fn remove_asset(&mut self, id: AssetId) -> Result<()> { /* ... */ }
+
+    /// Saves the project to a JSON file using the serialization module.
+    /// Updates the modified timestamp before saving.
+    pub fn save(&self, path: &std::path::Path) -> Result<()> { /* ... */ }
+
+    /// Loads a project from a JSON file using the serialization module.
+    pub fn load(path: &std::path::Path) -> Result<Self> { /* ... */ }
+
+    /// Renders the project to a video file using default settings via the rendering module.
+    pub fn render(&self, output_path: &std::path::Path) -> Result<rendering::RenderResult> { /* ... */ }
+
+    /// Renders the project with the specified configuration via the rendering module.
+    pub fn render_with_config(
+        &self,
+        config: rendering::RenderConfig,
+    ) -> Result<rendering::RenderResult> { /* ... */ }
+}
+
+// Other related structs in mod.rs:
+pub struct ProjectId(Uuid); // Unique ID for a project
+pub struct ProjectMetadata { /* name, created_at, modified_at, description, tags */ }
+pub struct AssetId(Uuid); // Unique ID for an asset
+pub struct AssetReference { /* id, path, metadata */ }
+pub struct AssetMetadata { /* duration, dimensions, asset_type, extra */ }
+
+// Project-level error enum
+pub enum ProjectError {
+    Timeline(#[from] timeline::TimelineError),
+    Io(#[from] std::io::Error),
+    Serialization(String),
+    AssetNotFound(AssetId),
+    Rendering(#[from] rendering::RenderError),
 }
 ```
 
-### Timeline (timeline/timeline.rs)
+**Responsibilities:**
+- Holds the overall project state (timeline, assets, metadata).
+- Provides methods for basic project lifecycle management (new, load, save).
+- Manages the list of assets used in the project.
+- Delegates timeline editing to the `Timeline` struct.
+- Delegates rendering to the `rendering` module.
+- Delegates serialization/deserialization to the `serialization` module.
+- **Note:** Does not directly manage edit history (`EditHistory` is part of the `timeline` module).
 
-The timeline data structure for managing video editing timeline:
+### Timeline Editing (`timeline/mod.rs`, `timeline/multi_track.rs`, `timeline/history.rs`)
 
-```rust
-pub struct Timeline {
-    /// Tracks in the timeline
-    pub tracks: Vec<Track>,
-    /// Timeline duration
-    pub duration: Duration,
-    /// Timeline settings
-    pub settings: TimelineSettings,
-}
+This is the core of the editing functionality.
 
-impl Timeline {
-    /// Create a new empty timeline
-    pub fn new() -> Self {
-        Self {
-            tracks: Vec::new(),
-            duration: Duration::from_seconds(0.0),
-            settings: TimelineSettings::default(),
-        }
-    }
-    
-    /// Add a new track to the timeline
-    pub fn add_track(&mut self, kind: TrackKind) -> TrackId {
-        let id = TrackId::new();
-        let track = Track::new(id, kind);
-        self.tracks.push(track);
-        id
-    }
-    
-    /// Remove a track from the timeline
-    pub fn remove_track(&mut self, track_id: TrackId) -> Result<()> {
-        let idx = self.tracks.iter()
-            .position(|t| t.id == track_id)
-            .ok_or(Error::TrackNotFound(track_id))?;
-            
-        self.tracks.remove(idx);
-        self.recalculate_duration();
-        Ok(())
-    }
-    
-    /// Add a clip to a track
-    pub fn add_clip(&mut self, track_id: TrackId, clip: Clip) -> Result<ClipId> {
-        let track = self.tracks.iter_mut()
-            .find(|t| t.id == track_id)
-            .ok_or(Error::TrackNotFound(track_id))?;
-            
-        // Check for overlapping clips
-        if track.has_overlap(&clip) {
-            return Err(Error::ClipOverlap(clip.start_time));
-        }
-        
-        let clip_id = clip.id;
-        track.add_clip(clip);
-        self.recalculate_duration();
-        Ok(clip_id)
-    }
-    
-    /// Remove a clip from a track
-    pub fn remove_clip(&mut self, track_id: TrackId, clip_id: ClipId) -> Result<()> {
-        let track = self.tracks.iter_mut()
-            .find(|t| t.id == track_id)
-            .ok_or(Error::TrackNotFound(track_id))?;
-            
-        track.remove_clip(clip_id)?;
-        self.recalculate_duration();
-        Ok(())
-    }
-    
-    /// Move a clip within the timeline
-    pub fn move_clip(&mut self, track_id: TrackId, clip_id: ClipId, new_start: TimePosition) -> Result<()> {
-        let track = self.tracks.iter_mut()
-            .find(|t| t.id == track_id)
-            .ok_or(Error::TrackNotFound(track_id))?;
-            
-        track.move_clip(clip_id, new_start)?;
-        self.recalculate_duration();
-        Ok(())
-    }
-    
-    /// Check if an asset is used in the timeline
-    pub fn is_asset_used(&self, asset_id: AssetId) -> bool {
-        self.tracks.iter().any(|track| {
-            track.clips.iter().any(|clip| clip.asset_id == asset_id)
-        })
-    }
-    
-    /// Recalculate timeline duration based on clips
-    fn recalculate_duration(&mut self) {
-        self.duration = self.tracks.iter()
-            .flat_map(|t| t.clips.iter())
-            .map(|c| c.start_time + c.duration)
-            .max()
-            .unwrap_or(TimePosition::from_seconds(0.0))
-            .into();
-    }
-}
-```
-
-### Track (timeline/track.rs)
-
-The track structure for managing a single track in the timeline:
+#### Timeline Structure (`timeline/mod.rs`)
 
 ```rust
-pub struct Track {
-    /// Track identifier
-    pub id: TrackId,
-    /// Track type (video, audio, etc.)
-    pub kind: TrackKind,
-    /// Clips in this track
-    pub clips: Vec<Clip>,
-    /// Whether the track is enabled
-    pub enabled: bool,
-    /// Track name
-    pub name: String,
-}
-
-impl Track {
-    /// Create a new empty track
-    pub fn new(id: TrackId, kind: TrackKind) -> Self {
-        Self {
-            id,
-            kind,
-            clips: Vec::new(),
-            enabled: true,
-            name: format!("{} {}", kind.as_str(), id),
-        }
-    }
-    
-    /// Add a clip to the track
-    pub fn add_clip(&mut self, clip: Clip) {
-        // Insert clip in sorted order by start time
-        let idx = self.clips.binary_search_by(|c| {
-            c.start_time.partial_cmp(&clip.start_time).unwrap()
-        }).unwrap_or_else(|e| e);
-        
-        self.clips.insert(idx, clip);
-    }
-    
-    /// Remove a clip from the track
-    pub fn remove_clip(&mut self, clip_id: ClipId) -> Result<()> {
-        let idx = self.clips.iter()
-            .position(|c| c.id == clip_id)
-            .ok_or(Error::ClipNotFound(clip_id))?;
-            
-        self.clips.remove(idx);
-        Ok(())
-    }
-    
-    /// Move a clip to a new start position
-    pub fn move_clip(&mut self, clip_id: ClipId, new_start: TimePosition) -> Result<()> {
-        // Find clip
-        let idx = self.clips.iter()
-            .position(|c| c.id == clip_id)
-            .ok_or(Error::ClipNotFound(clip_id))?;
-            
-        // Remove clip from current position
-        let mut clip = self.clips.remove(idx);
-        
-        // Update start time
-        clip.start_time = new_start;
-        
-        // Check for overlaps with other clips
-        if self.has_overlap(&clip) {
-            // Restore clip to original position
-            self.clips.insert(idx, clip);
-            return Err(Error::ClipOverlap(new_start));
-        }
-        
-        // Add clip at new position
-        self.add_clip(clip);
-        Ok(())
-    }
-    
-    /// Check if a clip would overlap with existing clips
-    pub fn has_overlap(&self, clip: &Clip) -> bool {
-        self.clips.iter().any(|c| {
-            c.id != clip.id && 
-            c.start_time < clip.start_time + clip.duration &&
-            c.start_time + c.duration > clip.start_time
-        })
-    }
-}
-```
-
-### Clip (timeline/clip.rs)
-
-The clip structure representing a media segment in the timeline:
-
-```rust
+// Represents a single clip on a track
 pub struct Clip {
-    /// Clip identifier
-    pub id: ClipId,
-    /// Associated asset identifier
-    pub asset_id: AssetId,
-    /// Start time in timeline
-    pub start_time: TimePosition,
-    /// Clip duration
-    pub duration: Duration,
-    /// Start point in source asset
-    pub in_point: TimePosition,
-    /// End point in source asset
-    pub out_point: TimePosition,
-    /// Applied effects
-    pub effects: Vec<Effect>,
-    /// Clip properties
-    pub properties: ClipProperties,
+    id: ClipId,
+    asset_id: AssetId,
+    position: TimePosition,  // Start time on the timeline
+    duration: Duration,
+    source_start: TimePosition, // Start time within the source asset
+    source_end: TimePosition,   // End time within the source asset
 }
-
 impl Clip {
-    /// Create a new clip from an asset
-    pub fn new(
-        asset_id: AssetId, 
-        start_time: TimePosition,
-        in_point: TimePosition,
-        out_point: TimePosition,
-    ) -> Result<Self> {
-        if out_point <= in_point {
-            return Err(Error::InvalidTimeRange(in_point, out_point));
-        }
-        
-        let duration = Duration::from_time_diff(in_point, out_point);
-        
-        Ok(Self {
-            id: ClipId::new(),
-            asset_id,
-            start_time,
-            duration,
-            in_point,
-            out_point,
-            effects: Vec::new(),
-            properties: ClipProperties::default(),
-        })
-    }
-    
-    /// Add an effect to the clip
-    pub fn add_effect(&mut self, effect: Effect) {
-        self.effects.push(effect);
-    }
-    
-    /// Remove an effect from the clip
-    pub fn remove_effect(&mut self, effect_id: EffectId) -> Result<()> {
-        let idx = self.effects.iter()
-            .position(|e| e.id == effect_id)
-            .ok_or(Error::EffectNotFound(effect_id))?;
-            
-        self.effects.remove(idx);
-        Ok(())
-    }
-    
-    /// Change clip duration and adjust in/out points
-    pub fn change_duration(&mut self, new_duration: Duration) -> Result<()> {
-        // Ensure new duration is valid
-        if new_duration <= Duration::from_seconds(0.0) {
-            return Err(Error::InvalidDuration(new_duration));
-        }
-        
-        let original_asset_duration = self.out_point - self.in_point;
-        let scale_factor = new_duration.as_seconds() / original_asset_duration.as_seconds();
-        
-        // Adjust in/out points to maintain relative positions
-        self.duration = new_duration;
-        self.out_point = self.in_point + new_duration;
-        
-        Ok(())
-    }
+    // Methods: new, id, asset_id, position, end_position, duration,
+    //          source_start, source_end, set_*, overlaps_with
+}
+
+// Represents a single track (Video, Audio, or Subtitle)
+pub enum TrackKind { Video, Audio, Subtitle }
+pub struct Track {
+    id: TrackId,
+    kind: TrackKind,
+    name: String,
+    clips: Vec<Clip>, // Sorted by position
+    muted: bool,
+    locked: bool,
+}
+impl Track {
+    // Methods: new, id, kind, name, set_name, is_muted, set_muted,
+    //          is_locked, set_locked, get_clips, get_clips_mut,
+    //          get_clip, get_clip_mut, add_clip (checks overlap, sorts),
+    //          remove_clip, duration (calculates based on last clip end)
+}
+
+// Represents the entire timeline with multiple tracks
+pub struct Timeline {
+    tracks: Vec<Track>,
+    multi_track_manager: multi_track::MultiTrackManager,
+}
+impl Timeline {
+    // Methods: new, get_tracks, get_track, get_track_mut, has_track,
+    //          find_track_containing_clip, add_track, remove_track (updates manager),
+    //          add_clip (delegates to Track), remove_clip (delegates to Track),
+    //          multi_track_manager, multi_track_manager_mut, duration (calculates based on longest track),
+    //          split_clip, merge_clips, move_clip_to_track
+}
+
+// Timeline-specific error enum
+pub enum TimelineError {
+    TrackNotFound(TrackId),
+    ClipNotFound { track: TrackId, clip: ClipId },
+    ClipOverlap { position: TimePosition },
+    MultiTrack(#[from] multi_track::MultiTrackError),
+    InvalidOperation(String),
 }
 ```
+**Responsibilities:**
+- Defines the `Timeline`, `Track`, and `Clip` data structures.
+- Provides methods for adding, removing, and querying tracks and clips.
+- Implements core editing operations: `split_clip`, `merge_clips`, `move_clip_to_track`.
+- Manages clip ordering within tracks.
+- Handles potential errors like clip overlaps and invalid operations.
+- Delegates multi-track relationship management to `MultiTrackManager`.
 
-### Edit History (history/history.rs)
-
-The history tracking system for undo/redo functionality:
+#### Multi-Track Relationships (`timeline/multi_track.rs`)
 
 ```rust
+pub enum TrackRelationship { Independent, Locked, TimingDependent, VisibilityDependent }
+
+pub struct MultiTrackManager {
+    dependencies: HashMap<TrackId, HashMap<TrackId, TrackRelationship>>,
+    reverse_dependencies: HashMap<TrackId, HashSet<TrackId>>,
+}
+impl MultiTrackManager {
+    // Methods: new, add_relationship (checks cycles), remove_relationship,
+    //          get_dependent_tracks, get_track_dependencies, get_relationship,
+    //          apply_edit (propagates changes), remove_track,
+    //          would_create_circular_dependency, is_dependent_on,
+    //          propagate_changes (recursive propagation based on relationship type),
+    //          synchronize_locked_tracks, update_timing_dependent_track,
+    //          update_visibility_dependent_track
+}
+
+// Multi-track specific error enum
+pub enum MultiTrackError { TrackNotFound(TrackId), CircularDependency(TrackId, TrackId), /* ... */ }
+```
+**Responsibilities:**
+- Manages dependencies and relationships (`Locked`, `TimingDependent`, etc.) between tracks.
+- Detects and prevents circular dependencies.
+- Propagates changes made to one track to its dependent tracks based on the relationship type.
+- Provides methods for querying track dependencies.
+
+#### Edit History (`timeline/history.rs`)
+
+```rust
+pub enum EditAction { /* AddClip, RemoveClip, MoveClip, SetClipDuration, ..., AddRelationship, ... */ }
+pub trait UndoableAction { fn apply(...); fn undo(...); }
+impl UndoableAction for EditAction { /* ... */ }
+
+pub struct TransactionGroup { description: Option<String>, actions: Vec<EditAction> }
+pub enum HistoryEntry { Single(EditAction), Group(TransactionGroup) }
+
 pub struct EditHistory {
-    /// History of actions
-    actions: Vec<HistoryAction>,
-    /// Current position in history
-    current_index: usize,
-    /// Maximum history size
-    max_history: usize,
+    undo_stack: Vec<HistoryEntry>,
+    redo_stack: Vec<HistoryEntry>,
+    current_transaction: Option<TransactionGroup>,
+    capacity: Option<usize>,
 }
-
 impl EditHistory {
-    /// Create a new empty history
-    pub fn new() -> Self {
-        Self {
-            actions: Vec::new(),
-            current_index: 0,
-            max_history: 100, // Default size
-        }
-    }
-    
-    /// Record a new action
-    pub fn record(&mut self, action: HistoryAction) {
-        // If we're not at the end of history, truncate the future actions
-        if self.current_index < self.actions.len() {
-            self.actions.truncate(self.current_index);
-        }
-        
-        // Add new action
-        self.actions.push(action);
-        self.current_index += 1;
-        
-        // Trim history if needed
-        if self.actions.len() > self.max_history {
-            self.actions.remove(0);
-            self.current_index -= 1;
-        }
-    }
-    
-    /// Undo the last action
-    pub fn undo(&mut self, project: &mut Project) -> Result<()> {
-        if self.current_index == 0 {
-            return Err(Error::NoActionToUndo);
-        }
-        
-        self.current_index -= 1;
-        let action = &self.actions[self.current_index];
-        action.undo(project)
-    }
-    
-    /// Redo a previously undone action
-    pub fn redo(&mut self, project: &mut Project) -> Result<()> {
-        if self.current_index >= self.actions.len() {
-            return Err(Error::NoActionToRedo);
-        }
-        
-        let action = &self.actions[self.current_index];
-        action.redo(project)?;
-        self.current_index += 1;
-        Ok(())
-    }
-    
-    /// Clear all history
-    pub fn clear(&mut self) {
-        self.actions.clear();
-        self.current_index = 0;
-    }
+    // Methods: new, begin_transaction, commit_transaction, rollback_transaction,
+    //          record_action, push_entry (handles capacity), undo, redo,
+    //          can_undo, can_redo, clear, undo_stack, redo_stack
 }
+
+// History specific error enum
+pub enum HistoryError { NothingToUndo, NothingToRedo, ApplyActionError(String), /* ... */ }
 ```
+**Responsibilities:**
+- Tracks timeline editing operations using `EditAction`.
+- Implements undo (`undo`) and redo (`redo`) functionality for individual actions and transactions.
+- Supports grouping multiple actions into atomic `TransactionGroup`s.
+- Manages the undo and redo stacks.
+- Handles potential errors during undo/redo operations.
 
-### History Action (history/action.rs)
+### Rendering (`rendering/`)
 
-The action data structure for tracking edits:
+Handles the process of rendering the project timeline into a final video file.
 
 ```rust
-pub enum HistoryAction {
-    /// Add clip to timeline
-    AddClip {
-        track_id: TrackId,
-        clip: Clip,
-    },
-    /// Remove clip from timeline
-    RemoveClip {
-        track_id: TrackId,
-        clip: Clip,
-    },
-    /// Move clip in timeline
-    MoveClip {
-        track_id: TrackId,
-        clip_id: ClipId,
-        old_start: TimePosition,
-        new_start: TimePosition,
-    },
-    /// Add track to timeline
-    AddTrack {
-        track: Track,
-    },
-    /// Remove track from timeline
-    RemoveTrack {
-        track: Track,
-    },
-    /// Add asset to project
-    AddAsset(AssetId),
-    /// Remove asset from project
-    RemoveAsset(AssetId),
-    /// Compound action (multiple actions as one)
-    Compound(Vec<HistoryAction>),
+// Configuration for rendering
+pub struct RenderConfig { /* output_path, width, height, frame_rate, codecs, quality, format, range, threads, ... */ }
+pub enum VideoCodec { H264, H265, VP9, ProRes, Copy }
+pub enum AudioCodec { AAC, MP3, Opus, FLAC, Copy }
+pub enum OutputFormat { MP4, WebM, MOV, MKV }
+
+// Manages track composition
+pub struct TrackCompositor { /* timeline, assets, intermediate_files, progress */ }
+impl TrackCompositor {
+    // Methods: new, set_progress_tracker, prepare_tracks (creates intermediate files via FFmpeg placeholders),
+    //          composite_tracks (combines intermediate files via FFmpeg placeholders), compose (main entry point)
 }
 
-impl HistoryAction {
-    /// Undo this action
-    pub fn undo(&self, project: &mut Project) -> Result<()> {
-        match self {
-            Self::AddClip { track_id, clip } => {
-                project.timeline().remove_clip(*track_id, clip.id)
-            },
-            Self::RemoveClip { track_id, clip } => {
-                project.timeline().add_clip(*track_id, clip.clone()).map(|_| ())
-            },
-            Self::MoveClip { track_id, clip_id, old_start, .. } => {
-                project.timeline().move_clip(*track_id, *clip_id, *old_start)
-            },
-            Self::AddTrack { track } => {
-                project.timeline().remove_track(track.id)
-            },
-            Self::RemoveTrack { track } => {
-                // Re-add track with all its clips
-                let timeline = project.timeline();
-                timeline.tracks.push(track.clone());
-                Ok(())
-            },
-            Self::AddAsset(asset_id) => {
-                project.remove_asset(*asset_id)
-            },
-            Self::RemoveAsset(asset_id) => {
-                // This requires the asset to be cached somewhere
-                // In a real implementation, we'd need to store the full asset data
-                Err(Error::UndoNotSupported("RemoveAsset"))
-            },
-            Self::Compound(actions) => {
-                // Undo actions in reverse order
-                for action in actions.iter().rev() {
-                    action.undo(project)?;
-                }
-                Ok(())
-            },
-        }
-    }
-    
-    /// Redo this action
-    pub fn redo(&self, project: &mut Project) -> Result<()> {
-        match self {
-            Self::AddClip { track_id, clip } => {
-                project.timeline().add_clip(*track_id, clip.clone()).map(|_| ())
-            },
-            Self::RemoveClip { track_id, clip } => {
-                project.timeline().remove_clip(*track_id, clip.id)
-            },
-            Self::MoveClip { track_id, clip_id, new_start, .. } => {
-                project.timeline().move_clip(*track_id, *clip_id, *new_start)
-            },
-            Self::AddTrack { track } => {
-                // Just add track ID since we can't really "redo" adding the exact same track
-                project.timeline().add_track(track.kind);
-                Ok(())
-            },
-            Self::RemoveTrack { track } => {
-                project.timeline().remove_track(track.id)
-            },
-            Self::AddAsset(asset_id) => {
-                // Similar problem as RemoveAsset undo
-                Err(Error::RedoNotSupported("AddAsset"))
-            },
-            Self::RemoveAsset(asset_id) => {
-                project.remove_asset(*asset_id)
-            },
-            Self::Compound(actions) => {
-                // Redo actions in original order
-                for action in actions {
-                    action.redo(project)?;
-                }
-                Ok(())
-            },
-        }
-    }
+// Manages the overall rendering pipeline
+pub struct RenderPipeline { /* project, config, progress, start_time */ }
+impl RenderPipeline {
+    // Methods: new, set_progress_callback, render (sync), render_async (async), cancel, get_progress
 }
+
+// Represents rendering progress
+pub struct RenderProgress { /* total_frames, completed, position, duration, elapsed, estimated, fps, stage */ }
+pub enum RenderStage { Preparing, RenderingVideo, ProcessingAudio, Muxing, Finalizing, Complete, Failed, Cancelled }
+pub struct SharedProgressTracker { /* Arc<Mutex<ProgressTracker>> */ }
+
+// Rendering specific error enum
+pub enum RenderError { FFmpeg(String), Composition(String), Io(String), Timeline(String), Cancelled }
 ```
+**Responsibilities:**
+- Defines rendering configuration options (`RenderConfig`).
+- Implements the rendering pipeline (`RenderPipeline`) coordinating different stages.
+- Handles track composition (`TrackCompositor`), currently using placeholders for actual FFmpeg calls to create intermediate files for each track and then mux them together.
+- Provides progress tracking (`RenderProgress`, `SharedProgressTracker`) and cancellation support.
+- Defines rendering-specific errors (`RenderError`).
 
-## Key Interfaces
+### Serialization (`serialization/`)
 
-### Project Interface
+Handles saving and loading the project state to/from files.
 
-The Project module exposes the following key interfaces:
+```rust
+// Serializable intermediate representations of project structures
+struct SerializedProject { /* ... */ }
+struct SerializedTimeline { /* ... */ }
+// ... and other Serialized* structs
 
-- **Project Management Interface**: Create, load, save, and manage projects
-- **Timeline Editing Interface**: Add, remove, and edit clips and tracks
-- **Asset Reference Interface**: Reference and use media assets within projects
-- **History Management Interface**: Undo and redo operations
+// Main serialization functions (currently only JSON)
+pub fn serialize_project(project: &Project, path: &Path) -> Result<()> { /* ... */ }
+pub fn deserialize_project(path: &Path) -> Result<Project> { /* ... */ }
 
-### Serialization Interface
+// Serialization specific error enum
+pub enum SerializationError { Io(#[from] std::io::Error), Json(#[from] serde_json::Error), IncompatibleFormat(String), UnsupportedVersion(String), /* ... */ }
+```
+**Responsibilities:**
+- Serializes the `Project` state (including timeline, assets, metadata) into JSON format using intermediate `Serialized*` structs.
+- Deserializes project data from JSON files back into a `Project` instance.
+- Handles version checking and format validation during deserialization.
+- Defines serialization-specific errors (`SerializationError`).
+- **Note:** Binary serialization is mentioned in comments but not implemented.
 
-The serialization system provides interfaces for:
+## Dependencies
 
-- **Project Serialization**: Convert projects to persistent formats
-- **Project Deserialization**: Load projects from stored formats
-- **Format Conversion**: Convert between different serialization formats
+- `Project` uses `Timeline`, `AssetReference`, `ProjectMetadata`.
+- `Timeline` uses `Track`, `Clip`, `MultiTrackManager`.
+- `Track` uses `Clip`.
+- `EditHistory` uses `EditAction`, `TransactionGroup`, `Timeline`.
+- `RenderPipeline` uses `Project`, `RenderConfig`, `TrackCompositor`, `SharedProgressTracker`.
+- `TrackCompositor` uses `Timeline`, `AssetReference`, `RenderConfig`, `SharedProgressTracker`, and (will use) `ffmpeg`.
+- `Project` uses `serialize_project` / `deserialize_project`.
+- `Serialization` uses `Project` and all its nested structures (via `Serialized*` representations) and `serde_json`.
 
-### Track Relationship Serialization
+## Implementation Details
 
-The track relationship serialization system provides a robust mechanism for persisting complex timeline structures:
+- **IDs:** Uses `Uuid` wrapped in newtypes (`ProjectId`, `AssetId`, `ClipId`, `TrackId`) for unique identification.
+- **Time:** Uses custom `TimePosition` and `Duration` types (likely from `utility` module, needs verification).
+- **Error Handling:** Uses `thiserror` for defining custom error enums in each relevant submodule (`ProjectError`, `TimelineError`, `MultiTrackError`, `HistoryError`, `RenderError`, `SerializationError`). `Result` type aliases are provided.
+- **Immutability/Mutability:** Follows Rust's borrowing rules. Mutable methods often set a `modified` flag (e.g., in `SubtitleEditor`, needs check if Project/Timeline use similar flags). Edit history actions store necessary data to revert changes.
+- **FFmpeg Interaction:** Primarily handled within the `rendering` module (currently placeholders) for composing tracks and the final output.
 
-#### Serialized Representation
+## Future Enhancements (from code analysis)
 
-- **SerializedTrackRelationship**: Enumeration representing different types of track relationships
-  - Independent: Tracks with no synchronization requirements
-  - Locked: Tracks that should move and edit together
-  - TimingDependent: Tracks where one affects the timing of another
-  - VisibilityDependent: Tracks where one determines visibility of another
+- Implement actual FFmpeg calls in `TrackCompositor` for track preparation and final muxing.
+- Add `EditAction` variants for `SplitClip` and `MergeClips` in `timeline/history.rs` and implement their `apply`/`undo`.
+- Consider implementing binary serialization format in `serialization/`.
+- Refine `update_timing_dependent_track` and `update_visibility_dependent_track` in `timeline/multi_track.rs` for more complex scenarios.
+- Implement the `remove` strategy in `SubtitleEditor::fix_overlaps`.
+- Potentially integrate `Project::metadata` with `ProjectMetadata`.
 
-- **SerializedMultiTrackManager**: Container for track relationship mappings
-  - Maps string-based track IDs to their relationship targets
-  - Preserves relationship types between tracks
-
-#### Serialization Process
-
-The serialization process for track relationships follows these steps:
-
-1. **Relationship Collection**: Retrieves all track relationships from the MultiTrackManager
-2. **ID Conversion**: Converts TrackId objects to string representation
-3. **Relationship Mapping**: Creates a mapping of source tracks to target tracks with relationship types
-4. **JSON Encoding**: Encodes the relationship structure into the JSON format
-
-#### Deserialization Process
-
-The deserialization process follows these steps:
-
-1. **Track Restoration**: Rebuilds all tracks in the timeline
-2. **ID Mapping**: Creates a mapping between string IDs and actual TrackId objects
-3. **Relationship Validation**: Verifies relationships for validity (avoids circular dependencies)
-4. **Safe Restoration**: Adds valid relationships to the timeline using a pattern that avoids borrowing conflicts
-5. **Error Handling**: Uses a best-effort approach to restore as many relationships as possible
-
-This robust serialization system ensures that complex timeline structures with multiple interdependent tracks can be saved and restored accurately, providing a foundation for sophisticated video editing capabilities.
-
-### Timeline Operations Interface
-
-The timeline operations system provides interfaces for:
-
-- **Clip Operations**: Add, remove, trim, split clips
-- **Track Operations**: Add, remove, reorder tracks
-- **Timeline Navigation**: Position cursor, zoom, scroll
-
-## Performance Considerations
-
-- **Memory Efficiency**: Project structures are designed to minimize memory usage
-- **Fast Serialization**: Efficient serialization formats for large projects
-- **Undo/Redo Performance**: History operations optimized for frequent use
-- **Timeline Rendering**: Efficient time-based queries for timeline rendering
-
-## Future Enhancements
-
-- **Multi-Track Compositing**: Advanced compositing between video tracks
-- **Keyframe Support**: Keyframe animation for effects and properties
-- **Nested Timelines**: Support for sequences within sequences
-- **Enhanced Effects**: Plugin system for custom effects
-- **Version Control**: Git-like version control for projects
-- **Collaborative Editing**: Support for multiple editors working on the same project
-
-This modular Project implementation provides a solid foundation for sophisticated video editing capabilities while maintaining a clean and efficient architecture suitable for a CLI-based tool.
-
-## Testing Strategy
-
-This comprehensive testing strategy ensures that the Project module is thoroughly tested for correctness, reliability, and performance, providing a solid foundation for the non-linear editing capabilities of the edv application. 
-
-## Implementation Status Update (2024)
-
-### Current Implementation Status: IN PROGRESS (50%)
-
-The Project module is currently under active development as part of Phase 2 of the edv project. While the core architecture and data structures have been designed, the implementation is still in progress with varying levels of completion across components:
-
-| Component | Status | Implementation Level | Notes |
-|-----------|--------|----------------------|-------|
-| Project Structure | ✅ Complete | 90% | Core project data structure implemented |
-| Timeline Model - Basic | ✅ Complete | 85% | Single track timeline functioning |
-| Timeline Model - Multi-track | 🔄 In Progress | 60% | Track relationships implemented, advanced features in progress |
-| Clip Management | ✅ Complete | 80% | Basic clip operations implemented |
-| Project Serialization | 🔄 In Progress | 70% | JSON format implemented, track relationship serialization complete |
-| Edit History | 🔄 In Progress | 40% | Basic action recording, undo/redo partially implemented |
-| Timeline Operations | 🔄 In Progress | 40% | Basic operations implemented, advanced features pending |
-| Project Validation | 🔄 In Progress | 30% | Basic validation implemented |
-
-### Implementation Priorities
-
-The current implementation focus is on:
-
-1. **Advanced Timeline Functionality**
-   - Enhancing multi-track timeline capabilities
-   - Implementing complex track relationships
-   - Developing comprehensive validation for timeline operations
-
-2. **Project Persistence**
-   - Optimizing the JSON serialization format
-   - Implementing incremental save operations
-   - Enhancing load performance for large projects
-
-3. **Basic Edit History**
-   - Implementing fundamental undo/redo operations
-   - Ensuring state consistency during history navigation
-   - Developing a stable history action model
-
-### Key Achievements
-
-Several major components have been successfully implemented:
-
-1. **Multi-track Relationship Management**
-   - Complete implementation of track relationship data structures
-   - Support for different relationship types (Locked, TimingDependent, VisibilityDependent)
-   - Circular dependency detection and prevention
-
-2. **Serialization System**
-   - Complete serialization of timeline structures including track relationships
-   - Robust deserialization with error handling
-   - Best-effort restoration of valid relationships
-
-3. **Timeline Data Model**
-   - Flexible track and clip model that supports complex editing operations
-   - Efficient query mechanisms for timeline data
-   - Support for various media types in a unified timeline
-
-### Key Challenges
-
-Several challenges have been encountered during implementation:
-
-1. **Timeline Model Complexity**
-   - Balancing flexibility with simplicity in the timeline data model
-   - Ensuring efficient operations for large timelines
-   - Maintaining consistent state during complex operations
-
-2. **Borrowing and Ownership**
-   - Addressing mutable borrowing conflicts in track relationship management
-   - Implementing safe patterns for timeline manipulation
-   - Resolving reference issues during serialization/deserialization
-
-3. **Edit History Design**
-   - Designing a comprehensive yet efficient history system
-   - Determining the appropriate granularity for history actions
-   - Handling complex interdependencies between actions
-
-4. **Project File Format**
-   - Creating a format that is both human-readable and efficient
-   - Ensuring backward compatibility for future versions
-   - Balancing completeness with performance
-
-### Next Development Steps
-
-The following steps are planned for completing the Project module:
-
-1. **Complete Timeline Model**
-   - Implement advanced multi-track operations
-   - Add comprehensive clip effect support
-   - Enhance timeline event handling
-
-2. **Enhance Serialization**
-   - Complete binary serialization format
-   - Add versioning and migration support
-   - Implement incremental save capabilities
-
-3. **Finalize Edit History**
-   - Complete undo/redo implementation
-   - Add grouping for complex operations
-   - Implement history pruning for performance
-
-4. **Develop Advanced Operations**
-   - Implement complex timeline operations
-   - Add transitions and effects support
-   - Create timeline optimization tools
-
-### Integration with Other Modules
-
-While still in development, the Project module has established integration points with:
-
-1. **CLI Module**: For project command execution
-2. **Asset Module**: For managing media assets within projects
-3. **Processing Module**: For rendering timeline segments
-
-The Project module remains a key focus of current development efforts, with significant progress expected in the coming weeks as part of the completion of Phase 2 of the edv project implementation plan.
+This updated documentation reflects the structure and key components found in the `src/project/` directory as of the last code review.

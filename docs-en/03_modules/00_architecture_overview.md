@@ -18,12 +18,22 @@ The edv project follows a modular architecture with clear separation of concerns
          │                      │                       │
          │                      │                       │
          ▼                      ▼                       ▼
-┌─────────────────┐     ┌─────────────────┐     ┌─────────────────┐
-│                 │     │                 │     │                 │
-│  Project Layer  │◄───►│  Asset Layer    │◄───►│  Utility Layer  │
-│                 │     │                 │     │                 │
-│                 │     │                 │     │                 │
-└─────────────────┘     └─────────────────┘     └─────────────────┘
+┌─────────────────┐            /│\                ┌─────────────────┐
+│                 │            / \                │                 │
+│  Project Layer  │◄──────────┘   └──────────────►│  Utility Layer  │
+│                 │     ┌─────────────────┐       │                 │
+│                 │     │                 │       │                 │
+└─────────────────┘     │  Audio Layer    │       └─────────────────┘
+                        │                 │               │
+                        └─────────────────┘               │
+                                │                         │
+                                ▼                         ▼
+                        ┌─────────────────┐     
+                        │                 │     
+                        │ Subtitle Layer  │     
+                        │                 │     
+                        │                 │     
+                        └─────────────────┘     
 ```
 
 ### 1.2 Design Principles
@@ -44,20 +54,24 @@ The edv project is organized into the following primary modules:
 | CLI | Command-line interface | Command parsing, user interaction, help text |
 | Core | Core functionality | Configuration, logging, execution context |
 | Processing | Video processing | FFmpeg integration, operation execution |
-| Project | Project management | Timeline editing, project serialization |
-| Asset | Asset management | Metadata extraction, media information |
+| Project | Project management | Timeline editing, asset management, clip management, project serialization, rendering |
+| Audio | Audio processing | Volume adjustment, extraction, replacement, fading |
+| Subtitle | Subtitle processing | Parsing, editing, formatting, styling, timing |
 | Utility | Shared utilities | Time code handling, file operations |
 
 ### 2.1 Dependencies Between Modules
 
 ```
-cli → core → processing
- ↓      ↓        ↓
- └──► project ◄──┘
-        ↓
-       asset
-        ↓
-      utility
+cli → core → processing ┐
+ ↓      ↓        ↓      │
+ └──► project ◄──┘      │
+      ↓    ↑            │
+      │    │            │
+      │    └── audio ◄──┘
+      │         ↓
+      │        subtitle
+      ↓
+    utility
 ```
 
 ## 3. Cross-Cutting Concerns
@@ -190,9 +204,8 @@ The implementation of the module architecture has progressed significantly, with
 | Core | ✅ Complete | 95% | Configuration, logging, execution context |
 | Processing | ✅ Complete | 85% | FFmpeg wrapper, command building, execution |
 | Audio | ✅ Complete | 95% | Volume adjustment, extraction, replacement, fading |
-| Subtitle | ✅ Complete | 90% | Parsing, editing, formatting, styling |
-| Project | 🔄 In Progress | 40% | Basic data structures, preliminary timeline model |
-| Asset | 🔄 In Progress | 30% | Basic metadata extraction |
+| Subtitle | ✅ Complete | 90% | Parsing, editing, formatting, styling, timing |
+| Project | ✅ Complete | 85% | Timeline structure, multi-track editing, asset management, edit history, serialization, rendering pipeline |
 | Utility | ✅ Complete | 80% | Time code handling, file operations, common utilities |
 
 ### 8.2 Implementation Highlights
@@ -209,12 +222,19 @@ The implementation of the module architecture has progressed significantly, with
    - Customizable audio fading with various curve options
 
 3. **Subtitle Support**
-   - Comprehensive subtitle model implemented
-   - Support for multiple subtitle formats
+   - Comprehensive subtitle model implemented with support for multiple subtitle formats (SRT, VTT)
    - Advanced editing capabilities including timing adjustments and text modifications
-   - Styling and positioning options
+   - Styling and positioning options for supported formats
+   - Subtitle overlapping resolution with multiple strategies
 
-4. **Architecture Refinements**
+4. **Project Management**
+   - Robust timeline model with multi-track support
+   - Track dependency management with relationship types
+   - Comprehensive edit history with undo/redo capabilities
+   - JSON serialization for project persistence
+   - Rendering pipeline with FFmpeg integration
+
+5. **Architecture Refinements**
    - Improved error handling throughout the codebase
    - Enhanced ownership model to follow Rust best practices
    - Reference lifetime improvements to address borrowing issues
@@ -222,20 +242,23 @@ The implementation of the module architecture has progressed significantly, with
 
 ### 8.3 Next Development Priorities
 
-1. **Complete Project Module**
-   - Finalize timeline data model
-   - Implement project state persistence
-   - Develop basic clip management operations
+1. **Enhance Audio and Subtitle Capabilities**
+   - Add support for additional subtitle formats (ASS/SSA)
+   - Implement more advanced audio effects (equalization, normalization, noise reduction)
+   - Improve synchronization between audio, video, and subtitles
+   - Add batch processing for audio and subtitle operations
 
-2. **Enhance Asset Module**
-   - Complete metadata extraction capabilities
-   - Implement asset management functions
-   - Add comprehensive media information utilities
+2. **Optimize Rendering Pipeline**
+   - Enhance FFmpeg integration for better performance
+   - Implement parallel processing for rendering tasks
+   - Add more output format and codec options
+   - Improve progress reporting and cancellation support
 
 3. **Prepare for Advanced Features**
-   - Design and implement extension points for filters and effects
-   - Develop foundation for batch processing capabilities
-   - Create infrastructure for multi-track editing
+   - Design and implement extension points for video effects and transitions
+   - Develop foundation for advanced timeline operations
+   - Create infrastructure for plugin support
+   - Add support for composition and layering effects
 
 ### 8.4 Architecture Validation
 

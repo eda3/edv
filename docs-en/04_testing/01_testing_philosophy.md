@@ -55,67 +55,67 @@ By adhering to these testing principles, the edv project will maintain high soft
 
 ## Implementation Status Update (2024)
 
-As of March 2024, the edv project has made significant progress in implementing its testing philosophy:
+As of March 2024, the edv project has made progress in implementing its testing philosophy with varying levels of coverage across modules:
 
 ### Current Testing Status
 
 | Aspect | Status | Implementation Level | Notes |
 |--------|--------|----------------------|-------|
-| Unit Testing | ✅ Complete | 85% | Core modules have extensive unit test coverage |
-| Integration Testing | ✅ Complete | 75% | Key module interactions well-tested |
-| System Testing | 🔄 In Progress | 50% | Main workflows tested, expanding coverage |
-| Performance Testing | 🔄 In Progress | 40% | Basic benchmarks established, further metrics needed |
-| Test Automation | ✅ Complete | 80% | CI pipeline fully operational for existing tests |
+| Unit Testing | ✅ Complete | 70% | Core functionality has unit tests, expanding coverage ongoing |
+| Integration Testing | 🔄 In Progress | 40% | Basic module interactions tested, more comprehensive tests needed |
+| System Testing | 🔶 Planned | 20% | Initial setup, more comprehensive workflows needed |
+| Performance Testing | 🔶 Planned | 10% | Basic benchmarks designed, implementation pending |
+| Test Automation | 🔄 In Progress | 50% | Basic test runs in place, CI pipeline enhancement ongoing |
 
 ### Key Achievements
 
 1. **Test Coverage**
-   - Achieved >80% code coverage for completed modules
-   - Implemented comprehensive tests for the FFmpeg wrapper component
-   - Established robust testing for time utilities and string handling
+   - Good unit test coverage for completed utility modules (time, etc.)
+   - Strong testing for CLI argument parsing and commands
+   - Effective tests for FFmpeg detection and version handling
 
 2. **Test-Driven Development**
-   - Successfully employed TDD for critical components like the Command Builder API
+   - Successfully employed TDD for components like time handling utilities
    - Used tests to guide API design for improved usability
-   - Implemented comprehensive error case testing for robust error handling
+   - Implemented error case testing for core functionality
 
-3. **Automation**
-   - Established CI pipeline running tests on all target platforms
-   - Implemented automatic test runs on pull requests
-   - Set up coverage reporting and trend tracking
+3. **Structured Testing**
+   - Co-located unit tests with implementation code
+   - Implemented clear test naming conventions
+   - Good separation of test concerns
 
 ### Focus Areas for Improvement
 
-1. **Project Module Testing**
-   - As the Project module is still under development (~40% complete), testing coverage needs to expand with implementation
-   - Planning to implement more property-based tests for timeline operations
-   - Working on test fixtures for complex project scenarios
+1. **Integration Testing**
+   - Need to establish a dedicated `tests/` directory
+   - Implement comprehensive module interaction tests
+   - Create more test fixtures for media operations
 
-2. **Asset Module Testing**
-   - The Asset module (~30% complete) requires more comprehensive tests as implementation progresses
-   - Developing mock implementations for testing metadata extraction
-   - Creating test utilities for simulating various media files
+2. **Complex Component Testing**
+   - FFmpeg command generation and execution
+   - Subtitle parsing and rendering
+   - Audio processing operations
 
-3. **Performance Testing Expansion**
-   - Need to establish more comprehensive performance baselines
-   - Implementing more granular benchmarks for common operations
-   - Developing performance regression detection in CI
+3. **Performance Testing**
+   - Establish performance benchmarks
+   - Implement memory usage tracking
+   - Create tests for large file handling
 
 ### Upcoming Testing Initiatives
 
-1. **Enhanced Test Data Management**
-   - Creating a more structured approach to test fixture management
-   - Implementing tools for generating synthetic test media
-   - Building a repository of diverse test media files
+1. **Test Infrastructure**
+   - Create dedicated test fixtures directory
+   - Implement test helpers for common test operations
+   - Establish CI workflow for continuous testing
 
-2. **Property-Based Testing**
-   - Introducing property testing for complex algorithms
-   - Implementing fuzzing for robust input validation
-   - Exploring model-based testing for state-heavy components
+2. **Testing Tools**
+   - Introduce code coverage tracking
+   - Implement test organization and discovery
+   - Enhance test reporting
 
-3. **Testing Documentation**
-   - Expanding test documentation to improve maintainability
-   - Creating testing guides for contributors
-   - Documenting test patterns and best practices
+3. **Documentation**
+   - Create testing guides for contributors
+   - Document test patterns and best practices
+   - Establish test naming conventions and organization
 
-The edv project remains committed to its testing philosophy, with ongoing efforts to maintain and improve the quality, reliability, and performance of the application through comprehensive testing. 
+The edv project is committed to improving its testing approach, with ongoing efforts to enhance test coverage and quality across all modules. 

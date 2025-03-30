@@ -10,29 +10,12 @@ The CLI module serves as the primary user interface for the edv application, han
 
 ```
 src/cli/
-├── mod.rs                 // Module exports
-├── app.rs                 // Main application entry point
-├── commands/              // Command implementations
-│   ├── mod.rs             // Command registry and interfaces
-│   ├── trim.rs            // Trim command implementation
-│   ├── concat.rs          // Concat command implementation
-│   ├── filter.rs          // Filter command implementation
-│   ├── audio.rs           // Audio processing commands
-│   ├── convert.rs         // Format conversion command
-│   ├── subtitle.rs        // Subtitle handling commands
-│   ├── project.rs         // Project management commands
-│   └── batch.rs           // Batch processing commands
-├── args/                  // Argument parsing
-│   ├── mod.rs             // Common argument definitions
-│   └── parsers.rs         // Custom argument parsers
-├── output/                // Terminal output handling
-│   ├── mod.rs             // Output interfaces
-│   ├── formatter.rs       // Output formatting
-│   └── progress.rs        // Progress bar implementation
-└── utils/                 // CLI utilities
-    ├── mod.rs             // Utility exports
-    ├── help.rs            // Help text generation
-    └── completion.rs      // Shell completion generation
+├── mod.rs        # Module exports, Error enum, Result type
+├── app.rs        # Main application entry point (App, Cli, Commands)
+├── commands.rs   # Command registry and implementations
+├── args.rs       # Argument parsing utilities
+├── output.rs     # Terminal output formatting and progress reporting
+└── utils.rs      # CLI utilities (help text, validation)
 ```
 
 ## Key Components
@@ -42,66 +25,178 @@ src/cli/
 The main application entry point and command dispatcher:
 
 ```rust
+/// CLI application structure
 pub struct App {
-    config: AppConfig,
+    /// Command registry containing all available commands
     command_registry: CommandRegistry,
-    logger: Logger,
+    /// Application configuration
+    config: Config,
+    /// Logger for application messages
+    logger: Box<dyn Logger>,
 }
 
 impl App {
-    /// Create a new application instance with the given configuration
-    pub fn new(config: AppConfig, logger: Logger) -> Result<Self> {
-        let mut app = Self {
-            config,
+    /// Creates a new application instance with the given configuration
+    pub fn new(config: Config, logger: Box<dyn Logger>) -> Self {
+        Self {
             command_registry: CommandRegistry::new(),
+            config,
             logger,
-        };
-        app.register_commands()?;
-        Ok(app)
-    }
-    
-    /// Run the application with command line arguments
-    pub fn run() -> Result<()> {
-        let cli = Cli::parse();
-        let config = AppConfig::load(cli.config.as_deref())?;
-        let log_level = if cli.verbose { LogLevel::Debug } else { LogLevel::Info };
-        let logger = ConsoleLogger::new(log_level);
-        
-        let app = Self::new(config, logger)?;
-        app.execute_command(cli.command)
-    }
-    
-    /// Register all available commands
-    fn register_commands(&mut self) -> Result<()> {
-        self.command_registry.register(Box::new(TrimCommand::new()))?;
-        self.command_registry.register(Box::new(ConcatCommand::new()))?;
-        self.command_registry.register(Box::new(FilterCommand::new()))?;
-        // Register additional commands...
-        Ok(())
-    }
-    
-    /// Execute a command
-    fn execute_command(&self, command: Command) -> Result<()> {
-        let context = self.create_execution_context()?;
-        match command {
-            Command::Trim(args) => {
-                let cmd = self.command_registry.get("trim")?;
-                cmd.execute(&context, args)
-            }
-            // Handle other commands...
-            _ => Err(Error::UnknownCommand(format!("{:?}", command))),
         }
     }
     
-    /// Create execution context for command
-    fn create_execution_context(&self) -> Result<ExecutionContext> {
-        // Create execution context with necessary components
-        // ...
+    /// Initializes the application, registering all available commands
+    pub fn initialize(&mut self) -> Result<()> {
+        // Register all commands
+        self.register_commands()?;
+        
+        self.logger.info("Application initialized");
+        Ok(())
     }
+    
+    /// Registers all available commands with the command registry
+    fn register_commands(&mut self) -> Result<()> {
+        // Register commands
+        self.command_registry
+            .register(Box::new(commands::RenderCommand::new()))?;
+        // Additional commands will be registered here
+        
+        Ok(())
+    }
+    
+    /// Executes the given command with its arguments
+    pub fn execute_command(&self, command: Commands) -> Result<()> {
+        // Create execution context
+        let context = self.create_execution_context()?;
+        
+        // Match on command type and execute appropriate handler
+        match command {
+            Commands::Trim { input, output, start, end, recompress } => {
+                // Trim implementation
+            },
+            Commands::Concat { input, output, recompress } => {
+                // Concat implementation
+            },
+            Commands::Info { input, detailed } => {
+                // Info implementation
+            },
+            // Other commands...
+        }
+        
+        Ok(())
+    }
+    
+    /// Creates an execution context for command execution
+    fn create_execution_context(&self) -> Result<Context> {
+        Ok(Context::new(self.config.clone(), Arc::new(self.logger.clone())))
+    }
+}
+
+/// Application entry point
+pub fn run() -> Result<()> {
+    // Parse command line arguments
+    let cli = Cli::parse();
+    
+    // Configure logger based on verbosity
+    let log_level = if cli.verbose { LogLevel::Debug } else { LogLevel::Info };
+    let logger = Box::new(ConsoleLogger::new(log_level, true));
+    
+    // Create config (could load from file if specified in cli.config)
+    let config = Config::default();
+    
+    // Create and initialize application
+    let mut app = App::new(config, logger);
+    app.initialize()?;
+    
+    // Execute command
+    app.execute_command(cli.command)
 }
 ```
 
-### Command Interface (commands/mod.rs)
+### Command Line Parsing (app.rs)
+
+The CLI module uses clap for command line parsing:
+
+```rust
+/// Command line arguments parser
+#[derive(Parser)]
+#[clap(
+    name = "edv",
+    about = "CLI video editing tool based on FFmpeg",
+    version,
+    author
+)]
+pub struct Cli {
+    /// Subcommand to execute
+    #[clap(subcommand)]
+    pub command: Commands,
+
+    /// Enable verbose output
+    #[clap(short, long, global = true)]
+    pub verbose: bool,
+
+    /// Path to configuration file
+    #[clap(short, long, global = true)]
+    pub config: Option<PathBuf>,
+}
+
+/// Subcommands supported by the application
+#[derive(Subcommand)]
+pub enum Commands {
+    /// Trim a video to specified start and end times
+    Trim {
+        /// Input video file path
+        #[clap(short, long, value_parser)]
+        input: String,
+
+        /// Output video file path
+        #[clap(short, long, value_parser)]
+        output: String,
+
+        /// Start time (format: HH:MM:SS.mmm or seconds)
+        #[clap(short, long)]
+        start: Option<String>,
+
+        /// End time (format: HH:MM:SS.mmm or seconds)
+        #[clap(short, long)]
+        end: Option<String>,
+
+        /// Re-encode the video instead of using stream copy
+        #[clap(short, long, action)]
+        recompress: bool,
+    },
+
+    /// Concatenate multiple video files
+    Concat {
+        /// Input video files
+        #[clap(short, long, value_parser, num_args = 1..)]
+        input: Vec<String>,
+
+        /// Output video file path
+        #[clap(short, long, value_parser)]
+        output: String,
+
+        /// Re-encode the video instead of using stream copy
+        #[clap(short, long, action)]
+        recompress: bool,
+    },
+
+    /// Display information about a media file
+    Info {
+        /// Input media file path
+        #[clap(value_parser)]
+        input: String,
+
+        /// Show detailed information
+        #[clap(short, long, action)]
+        detailed: bool,
+    },
+    
+    // Additional commands will be added here
+}
+```
+
+### Command Interface (commands.rs)
 
 The trait defining the interface for all commands:
 
@@ -111,21 +206,16 @@ pub trait Command {
     /// Get the name of the command
     fn name(&self) -> &str;
     
-    /// Get the description of the command
+    /// Get a brief description of the command
     fn description(&self) -> &str;
     
-    /// Get usage examples
-    fn usage(&self) -> &str;
-    
-    /// Build command arguments
-    fn configure_args(&self, app: Command) -> Command;
-    
-    /// Execute the command with given context and arguments
-    fn execute(&self, context: &ExecutionContext, args: &ArgMatches) -> Result<()>;
+    /// Execute the command with the given context and arguments
+    fn execute(&self, context: &Context, args: &[String]) -> Result<()>;
 }
 
 /// Registry for managing commands
 pub struct CommandRegistry {
+    /// Map of command names to command implementations
     commands: HashMap<String, Box<dyn Command>>,
 }
 
@@ -163,501 +253,326 @@ impl CommandRegistry {
 }
 ```
 
-### Command Implementations
+### Command Implementations (commands.rs)
 
-Each command implements the Command trait:
+Example of a command implementation:
 
 ```rust
-// Trim command implementation (commands/trim.rs)
-pub struct TrimCommand;
+/// Project rendering command
+pub struct RenderCommand;
 
-impl TrimCommand {
+impl RenderCommand {
+    /// Create a new render command
     pub fn new() -> Self {
         Self
     }
 }
 
-impl Command for TrimCommand {
+impl Command for RenderCommand {
     fn name(&self) -> &str {
-        "trim"
+        "render"
     }
     
     fn description(&self) -> &str {
-        "Trim a video file to a specified duration"
+        "Render a project to an output file"
     }
     
-    fn usage(&self) -> &str {
-        "edv trim --input input.mp4 --output output.mp4 --start 00:00:10 --end 00:01:00"
-    }
-    
-    fn configure_args(&self, app: Command) -> Command {
-        app.arg(
-            Arg::new("input")
-                .short('i')
-                .long("input")
-                .value_name("FILE")
-                .help("Input video file")
-                .required(true)
-        )
-        .arg(
-            Arg::new("output")
-                .short('o')
-                .long("output")
-                .value_name("FILE")
-                .help("Output video file")
-                .required(true)
-        )
-        .arg(
-            Arg::new("start")
-                .short('s')
-                .long("start")
-                .value_name("TIME")
-                .help("Start time (format: HH:MM:SS.mmm or seconds)")
-                .required(false)
-        )
-        .arg(
-            Arg::new("end")
-                .short('e')
-                .long("end")
-                .value_name("TIME")
-                .help("End time (format: HH:MM:SS.mmm or seconds)")
-                .required(false)
-        )
-        .arg(
-            Arg::new("recompress")
-                .short('r')
-                .long("recompress")
-                .help("Recompress the video instead of stream copying")
-                .action(ArgAction::SetTrue)
-        )
-    }
-    
-    fn execute(&self, context: &ExecutionContext, args: &ArgMatches) -> Result<()> {
-        // Extract arguments
-        let input = args.get_one::<String>("input").unwrap();
-        let output = args.get_one::<String>("output").unwrap();
-        let start = args.get_one::<String>("start").map(|s| {
-            TimePosition::from_string(s).unwrap_or_else(|_| {
-                context.logger.warning(&format!("Invalid start time: {}, using 0", s));
-                TimePosition::from_seconds(0.0)
-            })
-        });
-        let end = args.get_one::<String>("end").map(|e| {
-            TimePosition::from_string(e).unwrap_or_else(|_| {
-                context.logger.warning(&format!("Invalid end time: {}, using file end", e));
-                TimePosition::from_seconds(f64::MAX)
-            })
-        });
-        let recompress = args.get_flag("recompress");
+    fn execute(&self, context: &Context, args: &[String]) -> Result<()> {
+        // Implementation details would go here
+        // For example:
+        // - Parse arguments specific to rendering
+        // - Load the project
+        // - Configure rendering options
+        // - Execute the render
+        // - Report progress
         
-        // Create operation
-        let operation = TrimOperation::new(
-            &Path::new(input),
-            &Path::new(output),
-            start,
-            end,
-            recompress,
-        );
-        
-        // Setup progress reporter
-        let progress = context.create_progress_bar(
-            "Trimming video",
-            None, // We'll get the duration from the file
-        );
-        
-        // Execute operation
-        context.get_pipeline().execute(Box::new(operation), Some(progress))
+        context.logger.info("Project rendered successfully");
+        Ok(())
     }
 }
 ```
 
-### Progress Display (output/progress.rs)
-
-```rust
-pub struct ProgressDisplay {
-    progress_bar: ProgressBar,
-    format: ProgressFormat,
-    total_steps: u64,
-    start_time: Instant,
-}
-
-impl ProgressDisplay {
-    /// Create a new progress display with the given total steps and format
-    pub fn new(total_steps: u64, format: ProgressFormat) -> Self {
-        let pb = ProgressBar::new(total_steps);
-        // Set style based on format
-        match format {
-            ProgressFormat::Bytes => {
-                pb.set_style(ProgressStyle::with_template(
-                    "{spinner:.green} [{elapsed_precise}] [{bar:40.cyan/blue}] {bytes}/{total_bytes} ({eta})"
-                ).unwrap());
-            }
-            ProgressFormat::Percentage => {
-                pb.set_style(ProgressStyle::with_template(
-                    "{spinner:.green} [{elapsed_precise}] [{bar:40.cyan/blue}] {percent}% ({eta})"
-                ).unwrap());
-            }
-            ProgressFormat::Time => {
-                pb.set_style(ProgressStyle::with_template(
-                    "{spinner:.green} [{elapsed_precise}] [{bar:40.cyan/blue}] {msg} ({eta})"
-                ).unwrap());
-            }
-        }
-        
-        Self {
-            progress_bar: pb,
-            format,
-            total_steps,
-            start_time: Instant::now(),
-        }
-    }
-    
-    /// Update progress with the current position and optional message
-    pub fn update(&self, progress: u64, message: Option<String>) {
-        self.progress_bar.set_position(progress);
-        if let Some(msg) = message {
-            self.progress_bar.set_message(msg);
-        }
-    }
-    
-    /// Mark progress as finished with a completion message
-    pub fn finish(&self, message: String) {
-        self.progress_bar.finish_with_message(message);
-    }
-    
-    /// Mark progress as failed with an error message
-    pub fn error(&self, message: String) {
-        self.progress_bar.abandon_with_message(message);
-    }
-    
-    /// Get the elapsed time since progress started
-    pub fn elapsed(&self) -> Duration {
-        self.start_time.elapsed()
-    }
-}
-```
-
-## Implementation Details
-
-### Command Line Parsing
-
-The edv CLI uses clap for command line parsing:
-
-```rust
-// Main command structure
-#[derive(Parser)]
-#[clap(name = "edv", about = "Video editing tool")]
-#[clap(version = env!("CARGO_PKG_VERSION"))]
-#[clap(author = env!("CARGO_PKG_AUTHORS"))]
-pub struct Cli {
-    #[clap(subcommand)]
-    pub command: Command,
-    
-    #[clap(short, long, global = true)]
-    pub verbose: bool,
-    
-    #[clap(short, long, global = true)]
-    pub config: Option<PathBuf>,
-}
-
-// Subcommand enum
-#[derive(Subcommand)]
-pub enum Command {
-    #[clap(about = "Trim a video")]
-    Trim(TrimArgs),
-    
-    #[clap(about = "Concatenate videos")]
-    Concat(ConcatArgs),
-    
-    #[clap(about = "Apply filters to a video")]
-    Filter(FilterArgs),
-    
-    #[clap(about = "Process audio in a video")]
-    Audio(AudioArgs),
-    
-    #[clap(about = "Convert video format")]
-    Convert(ConvertArgs),
-    
-    #[clap(about = "Work with subtitles")]
-    Subtitle(SubtitleArgs),
-    
-    #[clap(about = "Manage projects")]
-    Project(ProjectArgs),
-    
-    #[clap(about = "Process multiple files")]
-    Batch(BatchArgs),
-}
-```
-
-### Custom Argument Parsing
-
-For specialized types like time positions:
-
-```rust
-// Time position argument parser
-pub struct TimePositionValueParser;
-
-impl ValueParser for TimePositionValueParser {
-    type Value = TimePosition;
-
-    fn parse_ref(&self, cmd: &Command, arg: Option<&Arg>, value: &OsStr) -> Result<Self::Value, Error> {
-        let value_str = value.to_str().ok_or_else(|| {
-            Error::new(ErrorKind::InvalidUtf8).with_cmd(cmd).with_arg(arg)
-        })?;
-        
-        TimePosition::from_string(value_str).map_err(|e| {
-            Error::new(ErrorKind::InvalidValue)
-                .with_cmd(cmd)
-                .with_arg(arg)
-                .with_message(format!("Invalid time format: {}", e))
-        })
-    }
-}
-```
-
-### Terminal Output
+### Output Formatting (output.rs)
 
 For formatted console output:
 
 ```rust
-pub enum OutputFormat {
-    Plain,
-    Colored,
-    Json,
-}
-
+/// Output formatter for terminal output
 pub struct OutputFormatter {
-    format: OutputFormat,
+    /// Whether to use ANSI colors
+    use_colors: bool,
 }
 
 impl OutputFormatter {
-    pub fn new(format: OutputFormat) -> Self {
-        Self { format }
+    /// Create a new output formatter
+    pub fn new(use_colors: bool) -> Self {
+        Self { use_colors }
     }
     
-    pub fn print_info(&self, message: &str) {
-        match self.format {
-            OutputFormat::Plain => println!("INFO: {}", message),
-            OutputFormat::Colored => println!("{} {}", "INFO:".blue(), message),
-            OutputFormat::Json => println!("{{\"level\":\"info\",\"message\":{}}}", 
-                                          serde_json::to_string(message).unwrap()),
+    /// Print an informational message
+    pub fn info(&self, message: &str) {
+        if self.use_colors {
+            println!("\x1b[32m[INFO]\x1b[0m {}", message);
+        } else {
+            println!("[INFO] {}", message);
         }
     }
     
-    pub fn print_error(&self, message: &str) {
-        match self.format {
-            OutputFormat::Plain => eprintln!("ERROR: {}", message),
-            OutputFormat::Colored => eprintln!("{} {}", "ERROR:".red().bold(), message),
-            OutputFormat::Json => println!("{{\"level\":\"error\",\"message\":{}}}", 
-                                          serde_json::to_string(message).unwrap()),
+    /// Print an error message
+    pub fn error(&self, message: &str) {
+        if self.use_colors {
+            eprintln!("\x1b[31m[ERROR]\x1b[0m {}", message);
+        } else {
+            eprintln!("[ERROR] {}", message);
         }
     }
     
-    pub fn print_warning(&self, message: &str) {
-        match self.format {
-            OutputFormat::Plain => println!("WARNING: {}", message),
-            OutputFormat::Colored => println!("{} {}", "WARNING:".yellow(), message),
-            OutputFormat::Json => println!("{{\"level\":\"warning\",\"message\":{}}}", 
-                                          serde_json::to_string(message).unwrap()),
+    /// Print a warning message
+    pub fn warning(&self, message: &str) {
+        if self.use_colors {
+            println!("\x1b[33m[WARNING]\x1b[0m {}", message);
+        } else {
+            println!("[WARNING] {}", message);
         }
     }
     
-    pub fn print_success(&self, message: &str) {
-        match self.format {
-            OutputFormat::Plain => println!("SUCCESS: {}", message),
-            OutputFormat::Colored => println!("{} {}", "SUCCESS:".green(), message),
-            OutputFormat::Json => println!("{{\"level\":\"success\",\"message\":{}}}", 
-                                          serde_json::to_string(message).unwrap()),
+    /// Print a success message
+    pub fn success(&self, message: &str) {
+        if self.use_colors {
+            println!("\x1b[32m[SUCCESS]\x1b[0m {}", message);
+        } else {
+            println!("[SUCCESS] {}", message);
         }
     }
 }
+```
+
+### Progress Reporting (output.rs)
+
+For tracking progress of long-running operations:
+
+```rust
+/// Interface for reporting progress of operations
+pub trait ProgressReporter: Send {
+    /// Update progress
+    fn update(&self, current: u64, total: u64, message: Option<&str>);
+    
+    /// Mark operation as complete
+    fn complete(&self, message: &str);
+    
+    /// Mark operation as failed
+    fn fail(&self, message: &str);
+}
+
+/// Console-based progress reporter using progress bars
+pub struct ConsoleProgress {
+    /// The progress bar
+    progress_bar: ProgressBar,
+    /// Start time of the operation
+    start_time: Instant,
+}
+
+impl ConsoleProgress {
+    /// Create a new console progress reporter
+    pub fn new(total: u64, title: &str) -> Self {
+        let pb = ProgressBar::new(total);
+        
+        // Configure progress bar style
+        pb.set_style(
+            ProgressStyle::default_bar()
+                .template("{spinner:.green} [{elapsed_precise}] [{bar:40.cyan/blue}] {pos}/{len} ({eta}) {msg}")
+                .unwrap()
+                .progress_chars("#>-")
+        );
+        
+        pb.set_message(title.to_string());
+        
+        Self {
+            progress_bar: pb,
+            start_time: Instant::now(),
+        }
+    }
+}
+
+impl ProgressReporter for ConsoleProgress {
+    fn update(&self, current: u64, total: u64, message: Option<&str>) {
+        if total > 0 && self.progress_bar.length() != total {
+            self.progress_bar.set_length(total);
+        }
+        
+        self.progress_bar.set_position(current);
+        if let Some(msg) = message {
+            self.progress_bar.set_message(msg.to_string());
+        }
+    }
+    
+    fn complete(&self, message: &str) {
+        self.progress_bar.finish_with_message(message.to_string());
+    }
+    
+    fn fail(&self, message: &str) {
+        self.progress_bar.abandon_with_message(message.to_string());
+    }
+}
+```
+
+## Error Handling (mod.rs)
+
+The CLI module defines its own error types:
+
+```rust
+/// Error type for CLI operations
+#[derive(Debug, thiserror::Error)]
+pub enum Error {
+    /// Error executing command
+    #[error("Command execution error: {0}")]
+    CommandExecution(String),
+
+    /// Unknown command
+    #[error("Unknown command: {0}")]
+    UnknownCommand(String),
+
+    /// Duplicate command registration
+    #[error("Duplicate command registration: {0}")]
+    DuplicateCommand(String),
+
+    /// Invalid argument
+    #[error("Invalid argument: {0}")]
+    InvalidArgument(String),
+
+    /// Missing argument
+    #[error("Missing argument: {0}")]
+    MissingArgument(String),
+
+    /// Invalid path
+    #[error("Invalid path: {0}")]
+    InvalidPath(String),
+
+    /// Invalid time format
+    #[error("Invalid time format: {0}")]
+    InvalidTimeFormat(String),
+
+    /// IO error
+    #[error("IO error: {0}")]
+    Io(#[from] std::io::Error),
+
+    /// Core error
+    #[error("Core error: {0}")]
+    Core(#[from] crate::core::Error),
+
+    /// Project error
+    #[error("Project error: {0}")]
+    ProjectError(String),
+
+    /// Render error
+    #[error("Render error: {0}")]
+    RenderError(String),
+}
+
+/// Result type for CLI operations
+pub type Result<T> = std::result::Result<T, Error>;
 ```
 
 ## Implementation Considerations
 
 ### Error Handling
 
+The CLI module follows these error handling principles:
+
+- Use the `thiserror` crate for defining structured error types
 - Provide clear, user-friendly error messages
 - Include context information in errors
-- Suggest remediation steps when appropriate
+- Support error conversion from other modules
 - Use consistent error output formatting
-
-```rust
-fn handle_error(error: Error, formatter: &OutputFormatter) -> i32 {
-    match error {
-        Error::InvalidArgument(msg) => {
-            formatter.print_error(&format!("Invalid argument: {}", msg));
-            formatter.print_info("Try 'edv --help' for more information.");
-            1
-        }
-        Error::FileNotFound(path) => {
-            formatter.print_error(&format!("File not found: {}", path.display()));
-            2
-        }
-        Error::FFmpegError(msg) => {
-            formatter.print_error(&format!("FFmpeg error: {}", msg));
-            3
-        }
-        // Handle other error types...
-        _ => {
-            formatter.print_error(&format!("Unexpected error: {}", error));
-            99
-        }
-    }
-}
-```
-
-### Signal Handling
-
-Handle keyboard interrupts and other signals gracefully:
-
-```rust
-fn setup_signal_handlers() -> Result<()> {
-    let running = Arc::new(AtomicBool::new(true));
-    let r = running.clone();
-    
-    ctrlc::set_handler(move || {
-        r.store(false, Ordering::SeqCst);
-        println!("\nReceived Ctrl+C, shutting down gracefully...");
-    })?;
-    
-    Ok(())
-}
-```
 
 ### Progress Reporting
 
-Implement robust progress reporting for long-running operations:
+The progress reporting system follows these principles:
 
-- Parse FFmpeg output to extract progress information
-- Update progress bar based on elapsed time or frame count
-- Provide estimated time remaining
-- Handle streaming operations without known duration
+- Abstract progress reporting through a trait
+- Support operations with known and unknown total work
+- Provide meaningful time estimates
+- Allow for nested progress reporting
+- Support cancellation of in-progress operations
 
-### Shell Completion
+### Command Structure
 
-Generate shell completion scripts for various shells:
+Commands in the CLI module follow these principles:
 
-```rust
-pub fn generate_completions(shell: Shell, out_dir: &Path) -> Result<()> {
-    let mut app = Cli::command();
-    let name = app.get_name().to_string();
-    
-    generate_to(shell, &mut app, name, out_dir)?;
-    Ok(())
-}
-```
+- Consistent parameter naming across commands
+- Sensible defaults for optional parameters
+- Comprehensive help text
+- Input validation with clear error messages
+- Confirmation for destructive operations
 
 ## Integration with Other Modules
 
 ### Core Module Integration
 
-- Use the Core module for configuration access
-- Create execution context for commands
-- Access centralized error handling
-
-### Processing Module Integration
-
-- Execute operations via the processing pipeline
-- Track progress of operations
-- Handle operation failures
+- Uses the Core module for configuration and logging
+- Creates execution contexts for commands
+- Propagates errors from Core operations
 
 ### Project Module Integration
 
-- Access project state for project-related commands
-- Save and load projects
-- Validate project operations
+- Provides commands for project management
+- Supports project loading and saving
+- Enables timeline editing and rendering
 
-## Testing Strategy
+### Audio Module Integration
 
-This testing strategy ensures that the CLI module is thoroughly tested for correctness, usability, and integration with other components. 
+- Provides commands for audio processing
+- Supports volume adjustment and extraction
+- Enables audio replacement and effects
+
+### Subtitle Module Integration
+
+- Provides commands for subtitle processing
+- Supports subtitle editing and formatting
+- Enables subtitle extraction and injection
 
 ## Implementation Status Update (2024)
 
 ### Current Implementation Status
 
-The CLI module has been implemented as the primary interface for the edv application, providing a robust and user-friendly command-line experience. The current implementation status is as follows:
+The CLI module is in active development with the following status:
 
 | Component | Status | Notes |
 |-----------|--------|-------|
 | Application Structure | ✅ Complete | Core application framework implemented |
 | Command Registry | ✅ Complete | Dynamic command registration and discovery |
-| Basic Commands | ✅ Complete | Core video editing commands implemented |
-| Audio Commands | ✅ Complete | Audio processing commands fully functional |
-| Subtitle Commands | ✅ Complete | Subtitle handling commands implemented |
-| Project Commands | 🔄 In Progress | Basic functionality implemented, timeline features in development |
-| Batch Commands | 🔄 Planned | Scheduled for Phase 3 development |
-| Progress Display | ✅ Complete | Real-time progress reporting implemented |
-| Error Handling | ✅ Complete | Robust error messages and handling |
-| Help System | ✅ Complete | Comprehensive help text and examples |
-
-### Key Achievements
-
-1. **Command Structure**
-   - Implemented a flexible command registry system
-   - Created consistent command patterns across the application
-   - Established clear parameter naming conventions
-
-2. **User Experience**
-   - Developed informative progress reporting for long-running operations
-   - Implemented colorized output for better readability
-   - Created detailed error messages with recovery suggestions
-
-3. **Integration**
-   - Successfully integrated with the Processing module for video operations
-   - Connected with the Audio module for audio-specific commands
-   - Linked to the Subtitle module for subtitle management
-
-### Recent Improvements
-
-Several improvements have been made to enhance the CLI module:
-
-1. **Error Messaging**
-   - Enhanced error messages with context-specific information
-   - Added suggestions for common errors
-   - Improved error formatting for better readability
-
-2. **Command Documentation**
-   - Expanded help text with more examples
-   - Added detailed parameter descriptions
-   - Improved consistency across command documentation
-
-3. **Progress Reporting**
-   - Enhanced progress bar with more accurate time estimates
-   - Added support for nested operations with subprogress reporting
-   - Improved cancellation handling during long operations
-
-### Integration with Other Modules
-
-The CLI module serves as the entry point for the application and integrates with:
-
-1. **Core Module**: For configuration and logging
-2. **Processing Module**: For video processing operations
-3. **Audio Module**: For audio-specific commands
-4. **Subtitle Module**: For subtitle management commands
+| Command Parsing | ✅ Complete | Argument parsing with clap |
+| Output Formatting | ✅ Complete | Terminal output with color support |
+| Progress Reporting | ✅ Complete | Progress bar implementation |
+| Error Handling | ✅ Complete | Comprehensive error types and messages |
+| Basic Commands | 🔄 In Progress | Core video editing commands partially implemented |
+| Project Commands | 🔄 In Progress | Render command implemented, others in development |
+| Audio Commands | 🔶 Planned | Design completed, implementation coming soon |
+| Subtitle Commands | 🔶 Planned | Design completed, implementation coming soon |
 
 ### Future Development Plans
 
 The following enhancements are planned for the CLI module:
 
-1. **Interactive Mode**
-   - Implementation of an interactive shell for edv
-   - Command history and suggestions
-   - Tab completion for parameters
+1. **Complete Core Commands**
+   - Finish implementation of Trim, Concat, and Info commands
+   - Add Convert command for format conversion
+   - Implement Extract command for stream extraction
 
-2. **Batch Processing Interface**
-   - Commands for defining and executing batch jobs
-   - Job status monitoring and control
-   - Batch template management
+2. **Audio and Subtitle Commands**
+   - Implement Volume command for audio volume adjustment
+   - Add SubtitleEdit command for subtitle editing
+   - Develop SubtitleSync command for subtitle synchronization
 
-3. **Extended Project Commands**
-   - Timeline editing through CLI
-   - Project templates and presets
-   - Project import/export functionality
+3. **Enhanced Project Management**
+   - Add ProjectCreate and ProjectOpen commands
+   - Implement Timeline editing commands
+   - Develop Asset management commands
 
-4. **Scripting Support**
-   - Enhanced scripting capabilities
-   - Script generation from command history
-   - Integration with shell environments
+4. **User Experience Improvements**
+   - Add shell completion support
+   - Enhance error messaging with suggestions
+   - Implement verbose logging options
+   - Add dry-run mode for command testing
 
-The CLI module continues to evolve as the primary interface for the edv application, with ongoing improvements focused on usability, flexibility, and integration with the growing feature set of the application. 
+The CLI module will continue to evolve as the primary interface for the edv application, with a focus on usability, consistency, and integration with the growing feature set of the application. 
