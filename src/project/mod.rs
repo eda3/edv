@@ -1,9 +1,4 @@
 use chrono::{DateTime, Utc};
-/// Project management functionality.
-///
-/// This module provides functionality for creating, editing, and managing
-/// video editing projects, including timelines, assets, and metadata.
-use std::collections::HashMap;
 use std::path::PathBuf;
 use std::str::FromStr;
 use uuid::Uuid;
@@ -15,7 +10,6 @@ pub mod serialization;
 pub mod timeline;
 
 // Export types for convenience
-use timeline::{TrackId, TrackKind};
 
 /// Asset ID for resources used in projects.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]

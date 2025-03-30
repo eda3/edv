@@ -1013,51 +1013,119 @@ mod tests {
     fn test_undo_redo_transaction() {
         let mut history = EditHistory::new(None);
         let mut timeline = create_test_timeline();
+        // Fix: Add track and clip first
+        let track_id = timeline.add_track(TrackKind::Video);
         let clip_id = ClipId::new();
-        let track_id = TrackId::new();
+        let asset_id = AssetId::new();
+        let initial_pos = TimePosition::zero();
+        let initial_dur = Duration::from_seconds(10.0);
+        let clip = create_dummy_clip(
+            clip_id,
+            asset_id,
+            initial_pos.as_seconds(),
+            initial_dur.as_seconds(),
+        );
+        timeline.add_clip(track_id, clip.clone()).unwrap(); // Add the clip to the timeline
+
+        // Define actions based on the existing clip
         let action1 = EditAction::SetClipPosition {
             clip_id,
             track_id,
-            original_position: TimePosition::zero(),
+            original_position: initial_pos, // Position before this action
             new_position: TimePosition::from_seconds(5.0),
         };
         let action2 = EditAction::SetClipDuration {
             clip_id,
             track_id,
-            original_duration: Duration::from_seconds(10.0),
+            original_duration: initial_dur, // Duration before this action
             new_duration: Duration::from_seconds(8.0),
-            original_source_end: TimePosition::from_seconds(10.0),
-            new_source_end: TimePosition::from_seconds(8.0),
+            // Need correct source end times based on clip/action definitions
+            original_source_end: initial_pos + initial_dur,
+            new_source_end: TimePosition::from_seconds(5.0) + Duration::from_seconds(8.0), // Assumes action1 was applied first
         };
 
-        // Apply initial state (clip added)
-        action1.apply(&mut timeline).unwrap();
-
-        // Record transaction: AddClip, then SetClipPosition
+        // --- Test Transaction --- (Apply actions *during* the transaction recording)
         history.begin_transaction(None).unwrap();
-        history.record_action(action1.clone()); // Record adding
-        history.record_action(action2.clone()); // Record moving
+
+        // Apply and record action 1 (Set Position)
+        action1.apply(&mut timeline).unwrap(); // Apply state change
+        history.record_action(action1.clone()); // Record it
+        assert_eq!(
+            timeline
+                .get_track(track_id)
+                .unwrap()
+                .get_clip(clip_id)
+                .unwrap()
+                .position(),
+            TimePosition::from_seconds(5.0)
+        );
+
+        // Apply and record action 2 (Set Duration)
+        action2.apply(&mut timeline).unwrap(); // Apply state change
+        history.record_action(action2.clone()); // Record it
+        assert_eq!(
+            timeline
+                .get_track(track_id)
+                .unwrap()
+                .get_clip(clip_id)
+                .unwrap()
+                .duration(),
+            Duration::from_seconds(8.0)
+        );
+
         history.commit_transaction().unwrap();
 
-        // Apply the second action state (clip moved)
-        action2.apply(&mut timeline).unwrap();
-        // ... check state ...
+        assert!(history.can_undo());
+        assert!(!history.can_redo());
+        assert_eq!(history.undo_stack.len(), 1);
+        assert!(matches!(history.undo_stack[0], HistoryEntry::Group(_)));
 
-        // --- Test Undo ---
+        // --- Test Undo Transaction ---
         let undo_result = history.undo(&mut timeline);
         assert!(undo_result.is_ok());
         assert!(!history.can_undo());
         assert!(history.can_redo());
-        // ... check state ...
 
-        // --- Test Redo ---
+        // Check state reverted to *before* the transaction (clip at initial pos/dur)
+        let reverted_clip = timeline
+            .get_track(track_id)
+            .unwrap()
+            .get_clip(clip_id)
+            .unwrap();
+        assert_eq!(
+            reverted_clip.position(),
+            initial_pos,
+            "Undo should revert position"
+        );
+        assert_eq!(
+            reverted_clip.duration(),
+            initial_dur,
+            "Undo should revert duration"
+        );
+        assert!(matches!(history.redo_stack[0], HistoryEntry::Group(_)));
+
+        // --- Test Redo Transaction ---
         let redo_result = history.redo(&mut timeline);
         assert!(redo_result.is_ok());
         assert!(history.can_undo());
         assert!(!history.can_redo());
-        // ... check state ...
 
-        // Verify the Group structure in the history stack after redo
+        // Check state matches *after* the transaction (clip moved and resized)
+        let redone_clip = timeline
+            .get_track(track_id)
+            .unwrap()
+            .get_clip(clip_id)
+            .unwrap();
+        assert_eq!(
+            redone_clip.position(),
+            TimePosition::from_seconds(5.0),
+            "Redo should restore position"
+        );
+        assert_eq!(
+            redone_clip.duration(),
+            Duration::from_seconds(8.0),
+            "Redo should restore duration"
+        );
         assert!(matches!(history.undo_stack[0], HistoryEntry::Group(_)));
     }
 
@@ -1108,17 +1176,29 @@ mod tests {
     fn test_clear_history() {
         let mut history = EditHistory::new(None);
         let mut timeline = create_test_timeline();
+        // Fix: Add track and clip first
+        let track_id = timeline.add_track(TrackKind::Video);
         let clip_id = ClipId::new();
-        let track_id = TrackId::new();
+        let asset_id = AssetId::new();
+        let initial_pos = TimePosition::zero();
+        let initial_dur = Duration::from_seconds(10.0);
+        let clip = create_dummy_clip(
+            clip_id,
+            asset_id,
+            initial_pos.as_seconds(),
+            initial_dur.as_seconds(),
+        );
+        timeline.add_clip(track_id, clip.clone()).unwrap();
+
         let action1 = EditAction::SetClipPosition {
             clip_id,
             track_id,
-            original_position: TimePosition::zero(),
+            original_position: initial_pos,
             new_position: TimePosition::from_seconds(5.0),
         };
 
         // Add an action
-        action1.apply(&mut timeline).unwrap();
+        action1.apply(&mut timeline).unwrap(); // Apply state change
         history.record_action(action1.clone());
         assert!(history.can_undo());
 
@@ -1126,9 +1206,10 @@ mod tests {
         history.undo(&mut timeline).unwrap();
         assert!(history.can_redo());
 
-        // Start a transaction
+        // Start a transaction (can be empty for this test)
         assert!(history.begin_transaction(None).is_ok());
-        history.record_action(action1);
+        // We don't need to record action1 again here for the clear test
+        // history.record_action(action1);
 
         // Clear everything
         history.clear();

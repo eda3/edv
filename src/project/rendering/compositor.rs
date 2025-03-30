@@ -3,7 +3,7 @@
 /// This module provides functionality for compositing multiple tracks
 /// together for rendering, handling different track types and their
 /// relationships.
-use std::collections::{HashMap, HashSet};
+use std::collections::HashMap;
 use std::path::Path;
 
 use crate::project::AssetId;

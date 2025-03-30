@@ -3,17 +3,16 @@
 /// This module provides the main pipeline for rendering timeline projects
 /// to video files, coordinating the various stages of the rendering process.
 use std::path::Path;
-use std::sync::{Arc, Mutex};
 use std::thread;
 
 use crate::project::Project;
 use crate::project::rendering::RenderError;
-use crate::project::rendering::compositor::{CompositionError, TrackCompositor};
+use crate::project::rendering::compositor::TrackCompositor;
 use crate::project::rendering::config::RenderConfig;
 use crate::project::rendering::progress::{
-    ProgressCallback, RenderProgress, RenderStage, SharedProgressTracker,
+    ProgressCallback, RenderProgress, SharedProgressTracker,
 };
-use crate::utility::time::{Duration, TimePosition};
+use crate::utility::time::Duration;
 
 /// Result of a rendering operation.
 #[derive(Debug, Clone)]
