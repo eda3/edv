@@ -33,7 +33,7 @@ pub struct FFmpeg {
     path: PathBuf,
     /// The `FFmpeg` version.
     version: Version,
-        }
+}
 
 impl FFmpeg {
     /// The minimum supported `FFmpeg` version.
@@ -63,22 +63,69 @@ impl FFmpeg {
     
     /// Detects the `FFmpeg` installation.
     pub fn detect() -> Result<Self> {
-        // First try to find in PATH
+        // 1. First check the current executable directory
+        if let Ok(exe_path) = std::env::current_exe() {
+            if let Some(exe_dir) = exe_path.parent() {
+                let ffmpeg_exe = exe_dir.join(if cfg!(windows) {
+                    "ffmpeg.exe"
+                } else {
+                    "ffmpeg"
+                });
+                if ffmpeg_exe.exists() {
+                    if let Ok(ffmpeg) = Self::detect_at_path(&ffmpeg_exe) {
+                        return Ok(ffmpeg);
+                    }
+                }
+            }
+        }
+
+        // 2. Check if FFMPEG_PATH environment variable is set
+        if let Ok(ffmpeg_path) = std::env::var("FFMPEG_PATH") {
+            let path = PathBuf::from(ffmpeg_path);
+            if path.exists() {
+                match Self::detect_at_path(&path) {
+                    Ok(ffmpeg) => return Ok(ffmpeg),
+                    Err(_) => {}
+                }
+            }
+        }
+
+        // 3. Try to find in PATH
         if let Ok(ffmpeg) = Self::detect_in_path() {
             return Ok(ffmpeg);
         }
 
-        // Then try common installation directories
+        // 4. Then try common installation directories
         if let Ok(ffmpeg) = Self::detect_in_common_locations() {
             return Ok(ffmpeg);
-                        }
+        }
 
         Err(Error::NotFound)
     }
     
     /// Detects `FFmpeg` installation from a specified path.
     pub fn detect_at_path<P: AsRef<Path>>(path: P) -> Result<Self> {
-        // Implementation details...
+        let path = path.as_ref().to_path_buf();
+
+        if !path.exists() {
+            return Err(Error::NotFound);
+        }
+
+        // Try to get version
+        match Self::parse_version_from_command(&path) {
+            Ok(version) => {
+                // Check version compatibility
+                if version < Self::MIN_VERSION {
+                    return Err(Error::UnsupportedVersion {
+                        actual: version,
+                        required: Self::MIN_VERSION,
+                    });
+                }
+
+                Ok(Self::new(path, version))
+            }
+            Err(e) => Err(e),
+        }
     }
 }
 ```

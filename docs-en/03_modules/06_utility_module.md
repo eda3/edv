@@ -234,8 +234,8 @@ impl Add for Duration {
     fn add(self, other: Self) -> Self {
         Self {
             seconds: self.seconds + other.seconds,
-            }
         }
+    }
 }
 
 impl Sub for Duration {
@@ -265,9 +265,9 @@ impl Sub<Duration> for TimePosition {
     fn sub(self, other: Duration) -> Self {
         Self {
             seconds: (self.seconds - other.as_seconds()).max(0.0),
-            }
         }
     }
+}
     
 impl Sub for TimePosition {
     type Output = Duration;
@@ -276,7 +276,6 @@ impl Sub for TimePosition {
         if self.seconds <= other.seconds {
             return Duration::zero();
         }
-
         Duration::from_seconds(self.seconds - other.seconds)
     }
 }

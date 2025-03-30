@@ -332,13 +332,165 @@ impl Command for RenderCommand {
 The Info command displays information about media files:
 
 ```rust
-/// Display information about a media file
+/// The info command, which displays information about media files
 pub struct InfoCommand;
 
 impl InfoCommand {
-    /// Create a new info command
+    /// Creates a new info command
     pub fn new() -> Self {
         Self
+    }
+    
+    /// Checks if the specified file exists
+    fn check_file_exists(&self, file_path: &str) -> Result<()> {
+        let path = Path::new(file_path);
+        if !path.exists() {
+            return Err(Error::CommandError(format!(
+                "File does not exist: {}",
+                file_path
+            )));
+        }
+        if !path.is_file() {
+            return Err(Error::CommandError(format!(
+                "Path is not a file: {}",
+                file_path
+            )));
+        }
+        Ok(())
+    }
+    
+    /// Gets media information from the specified file
+    fn get_media_info(&self, context: &Context, file_path: &str) -> Result<MediaInfo> {
+        // First try to detect FFmpeg
+        let ffmpeg = FFmpeg::detect()
+            .map_err(|e| Error::CommandError(format!("FFmpeg error: {e}")))?;
+            
+        // Get media info
+        ffmpeg
+            .get_media_info(file_path)
+            .map_err(|e| Error::CommandError(format!("Failed to get media info: {e}")))
+    }
+    
+    /// Formats a file size into a human-readable string
+    fn format_file_size(&self, size_str: &str) -> Result<String> {
+        let size = size_str
+            .parse::<f64>()
+            .map_err(|_| Error::CommandError(format!("Invalid file size: {size_str}")))?;
+            
+        const KB: f64 = 1024.0;
+        const MB: f64 = KB * 1024.0;
+        const GB: f64 = MB * 1024.0;
+        
+        let formatted = if size >= GB {
+            format!("{:.2} GB", size / GB)
+        } else if size >= MB {
+            format!("{:.2} MB", size / MB)
+        } else if size >= KB {
+            format!("{:.2} KB", size / KB)
+        } else {
+            format!("{} bytes", size as u64)
+        };
+        
+        Ok(formatted)
+    }
+    
+    /// Formats a duration into a human-readable string
+    fn format_duration(&self, duration_str: &str) -> Result<String> {
+        let duration = duration_str
+            .parse::<f64>()
+            .map_err(|_| Error::CommandError(format!("Invalid duration: {duration_str}")))?;
+            
+        let hours = (duration / 3600.0).floor() as u64;
+        let minutes = ((duration % 3600.0) / 60.0).floor() as u64;
+        let seconds = (duration % 60.0).floor() as u64;
+        let ms = ((duration - duration.floor()) * 1000.0).round() as u64;
+        
+        let formatted = if hours > 0 {
+            format!("{hours:02}:{minutes:02}:{seconds:02}.{ms:03}")
+        } else {
+            format!("{minutes:02}:{seconds:02}.{ms:03}")
+        };
+        
+        Ok(formatted)
+    }
+    
+    /// Displays media information in a formatted way
+    fn display_media_info(&self, context: &Context, media_info: &MediaInfo) -> Result<()> {
+        let format = &media_info.format;
+        
+        // Display basic information
+        context.output().info(&format!("File: {}", format.filename));
+        
+        if let Some(size) = &format.size {
+            if let Ok(formatted_size) = self.format_file_size(size) {
+                context.output().info(&format!("Size: {formatted_size}"));
+            }
+        }
+        
+        if let Some(duration) = &format.duration {
+            if let Ok(formatted_duration) = self.format_duration(duration) {
+                context.output().info(&format!("Duration: {formatted_duration}"));
+            }
+        }
+        
+        context.output().info(&format!("Format: {}", format.format_long_name));
+        
+        if let Some(bit_rate) = &format.bit_rate {
+            let bit_rate_num = bit_rate.parse::<f64>().unwrap_or(0.0);
+            let bit_rate_mbps = bit_rate_num / 1_000_000.0;
+            context.output().info(&format!("Bitrate: {:.2} Mbps", bit_rate_mbps));
+        }
+        
+        // Display stream information
+        context.output().info(&format!("Streams: {}", media_info.streams.len()));
+        
+        for stream in &media_info.streams {
+            let codec_type = stream.codec_type.to_uppercase();
+            let codec = &stream.codec_long_name;
+            
+            match stream.codec_type.as_str() {
+                "video" => {
+                    let width = stream.width.unwrap_or(0);
+                    let height = stream.height.unwrap_or(0);
+                    let fps = stream.frame_rate.as_deref().unwrap_or("unknown");
+                    
+                    context.output().info(&format!(
+                        "  Stream #{}: {} - {}, {}x{}, {} fps",
+                        stream.index, codec_type, codec, width, height, fps
+                    ));
+                }
+                "audio" => {
+                    let channels = stream.channels.unwrap_or(0);
+                    let sample_rate = stream.sample_rate.as_deref().unwrap_or("unknown");
+                    
+                    context.output().info(&format!(
+                        "  Stream #{}: {} - {}, {} Hz, {} channels",
+                        stream.index, codec_type, codec, sample_rate, channels
+                    ));
+                }
+                "subtitle" => {
+                    let language = stream
+                        .tags
+                        .as_ref()
+                        .and_then(|tags| tags.get("language"))
+                        .map(|s| s.as_str())
+                        .unwrap_or("unknown");
+                        
+                    context.output().info(&format!(
+                        "  Stream #{}: {} - {}, Language: {}",
+                        stream.index, codec_type, codec, language
+                    ));
+                }
+                _ => {
+                    context.output().info(&format!(
+                        "  Stream #{}: {} - {}",
+                        stream.index, codec_type, codec
+                    ));
+                }
+            }
+        }
+        
+        Ok(())
     }
 }
 
@@ -348,197 +500,45 @@ impl Command for InfoCommand {
     }
     
     fn description(&self) -> &str {
-        "Display information about a media file"
+        "Displays information about media files"
     }
     
     fn usage(&self) -> &str {
-        "info <file_path> [--detailed]"
+        "info <file> [--detailed]"
     }
     
     fn execute(&self, context: &Context, args: &[String]) -> Result<()> {
+        // Check for required arguments
         if args.is_empty() {
-            return Err(Error::MissingArgument("file path".to_string()));
+            return Err(Error::CommandError(
+                "No input file specified. Usage: info <file>".to_string(),
+            ));
         }
-
+        
         let file_path = &args[0];
-        let path = Path::new(file_path);
+        let detailed = args.len() > 1 && args[1] == "--detailed";
         
-        // Check if file exists
-        if !path.exists() {
-            return Err(Error::InvalidPath(format!("File not found: {}", file_path)));
-        }
-
-        // Get basic file information
-        context.logger.info(&format!("File information for: {}", file_path));
+        // Check if the file exists
+        self.check_file_exists(file_path)?;
         
-        if let Ok(metadata) = fs::metadata(path) {
-            let size_bytes = metadata.len();
-            let size_formatted = format_file_size(size_bytes);
-            
-            context.logger.info(&format!("File exists: Yes"));
-            context.logger.info(&format!("Size: {} ({} bytes)", size_formatted, size_bytes));
-            
-            // Get and format modification time
-            if let Ok(modified) = metadata.modified() {
-                let modified: DateTime<Utc> = modified.into();
-                context.logger.info(&format!(
-                    "Modified: {}", 
-                    modified.format("%Y-%m-%d %H:%M:%S UTC")
-                ));
-            }
-            
-            // Get MIME type using mime_guess crate
-            let mime = MimeGuess::from_path(path).first_or_octet_stream();
-            context.logger.info(&format!("Type: {}", mime));
-            
-            // Check if it's a media file
-            let is_media_file = mime.type_().as_str().starts_with("video") 
-                || mime.type_().as_str().starts_with("audio")
-                || mime.type_().as_str().starts_with("image");
-            
-            // Show if it's a directory
-            if metadata.is_dir() {
-                context.logger.info("Type: Directory");
-            } else if metadata.is_file() {
-                context.logger.info("Type: Regular file");
-            }
-            
-            // Show detailed information if requested
-            let detailed = args.len() > 1 && (args[1] == "--detailed" || args[1] == "-d");
-            
-            // If it's a media file and FFmpeg is available, get media info
-            if is_media_file {
-                match FFmpeg::detect() {
-                    Ok(ffmpeg) => {
-                        context.logger.info("Media Information:");
-                        
-                        match ffmpeg.get_media_info(path) {
-                            Ok(media_info) => {
-                                display_media_info(&media_info, context, detailed)?;
-                            }
-                            Err(e) => {
-                                context.logger.warning(&format!("Could not retrieve media info: {e}"));
-                            }
-                        }
-                    }
-                    Err(e) => {
-                        context.logger.warning(&format!("FFmpeg not available: {e}"));
-                        context.logger.warning("Media information cannot be displayed without FFmpeg.");
-                    }
-                }
-            } else if detailed {
-                context.logger
-                    .info("Note: This is not a media file, so no media-specific information is available.");
-            }
-        } else {
-            return Err(Error::InvalidPath(format!("Could not read file metadata: {}", file_path)));
+        // Get media information
+        let media_info = self.get_media_info(context, file_path)?;
+        
+        // Display the information
+        self.display_media_info(context, &media_info)?;
+        
+        // If detailed information is requested, print the raw JSON
+        if detailed {
+            context.output().info("\nDetailed Information:");
+            let json = serde_json::to_string_pretty(&media_info)
+                .map_err(|e| Error::CommandError(format!("Failed to serialize media info: {e}")))?;
+                
+            context.output().info(&json);
         }
-
-        context.logger.info("Info command executed successfully");
+        
         Ok(())
     }
 }
-
-/// Displays media information.
-fn display_media_info(media_info: &MediaInfo, context: &Context, detailed: bool) -> Result<()> {
-    // Display format info
-    let format = &media_info.format;
-    context.logger.info(&format!("  Format: {}", format.format_long_name));
-    
-    // Display duration
-    if let Some(duration) = media_info.duration_seconds() {
-        let duration_fmt = format_duration(duration);
-        context.logger.info(&format!("  Duration: {}", duration_fmt));
-    }
-    
-    // Display bit rate
-    if let Some(bit_rate) = media_info.bit_rate() {
-        context.logger.info(&format!("  Bit Rate: {} kb/s", bit_rate / 1000));
-    }
-    
-    // Display video streams
-    let video_streams = media_info.video_streams();
-    if !video_streams.is_empty() {
-        context.logger.info(&format!("  Video Streams: {}", video_streams.len()));
-        
-        for (i, stream) in video_streams.iter().enumerate() {
-            context.logger.info(&format!("    Stream #{}: {}", i, stream.codec_long_name));
-            
-            if let (Some(width), Some(height)) = (stream.width, stream.height) {
-                context.logger.info(&format!("      Resolution: {}x{}", width, height));
-            }
-            
-            if let Some(frame_rate) = &stream.frame_rate {
-                if let Ok((num, den)) = parse_frame_rate(frame_rate) {
-                    let fps = num as f64 / den as f64;
-                    context.logger.info(&format!("      Frame Rate: {:.2} fps", fps));
-                }
-            }
-            
-            // Additional detailed stream information when detailed flag is set...
-        }
-    }
-    
-    // Display audio streams
-    let audio_streams = media_info.audio_streams();
-    if !audio_streams.is_empty() {
-        context.logger.info(&format!("  Audio Streams: {}", audio_streams.len()));
-        
-        for (i, stream) in audio_streams.iter().enumerate() {
-            context.logger.info(&format!("    Stream #{}: {}", i, stream.codec_long_name));
-            
-            if let Some(sample_rate) = &stream.sample_rate {
-                context.logger.info(&format!("      Sample Rate: {} Hz", sample_rate));
-            }
-            
-            if let Some(channels) = stream.channels {
-                context.logger.info(&format!("      Channels: {}", channels));
-                
-                if let Some(channel_layout) = &stream.channel_layout {
-                    context.logger.info(&format!("      Channel Layout: {}", channel_layout));
-                }
-            }
-            
-            // Additional detailed audio stream information when detailed flag is set...
-        }
-    }
-    
-    // Display subtitle streams and format tags when detailed flag is set...
-    
-    Ok(())
-}
-
-/// Formats a file size into a human-readable string.
-fn format_file_size(size: u64) -> String {
-    const KB: u64 = 1024;
-    const MB: u64 = KB * 1024;
-    const GB: u64 = MB * 1024;
-    
-    if size >= GB {
-        format!("{:.2} GB", size as f64 / GB as f64)
-    } else if size >= MB {
-        format!("{:.2} MB", size as f64 / MB as f64)
-    } else if size >= KB {
-        format!("{:.2} KB", size as f64 / KB as f64)
-    } else {
-        format!("{} bytes", size)
-    }
-}
-
-/// Formats a duration in seconds into a human-readable string.
-fn format_duration(seconds: f64) -> String {
-    let hours = (seconds / 3600.0).floor() as u64;
-    let minutes = ((seconds % 3600.0) / 60.0).floor() as u64;
-    let secs = (seconds % 60.0).floor() as u64;
-    let millis = ((seconds % 1.0) * 1000.0).round() as u64;
-    
-    if hours > 0 {
-        format!("{}:{:02}:{:02}.{:03}", hours, minutes, secs, millis)
-    } else {
-        format!("{}:{:02}.{:03}", minutes, secs, millis)
-    }
-}
-```
 
 ### Output Formatting (output.rs)
 
@@ -818,57 +818,54 @@ For media file information processing:
 
 ## Implementation Status Update (2024)
 
-### Current Implementation Status
+### Current Implementation Status: IN PROGRESS (~60%)
 
-The CLI module is in active development with the following status:
+The CLI module is being actively developed with core functionality in place. The main application structure and command parsing is complete, and several key commands have been implemented.
 
-| Component | Status | Notes |
-|-----------|--------|-------|
-| Application Structure | ✅ Complete | Core application framework implemented |
-| Command Registry | ✅ Complete | Dynamic command registration and discovery |
-| Command Parsing | ✅ Complete | Argument parsing with clap |
-| Main Function | ✅ Complete | Error handling and application execution flow |
-| Output Formatting | ✅ Complete | Terminal output with color support |
-| Progress Reporting | ✅ Complete | Progress bar implementation |
-| Error Handling | ✅ Complete | Comprehensive error types and messages |
-| Info Command | ✅ Complete | Basic file information display with MIME detection |
-| Render Command | 🔄 In Progress | Initial implementation complete, functionality limited |
-| Other Basic Commands | 🔄 In Progress | Structure defined, implementation pending |
-| Project Commands | 🔄 In Progress | Render command implemented, others in development |
-| Audio Commands | 🔶 Planned | Design completed, implementation coming soon |
-| Subtitle Commands | 🔶 Planned | Design completed, implementation coming soon |
+| Component | Status | Implementation Level | Notes |
+|-----------|--------|----------------------|-------|
+| App Structure | ✅ Complete | 100% | Application entry point and command dispatcher |
+| Command Line Parsing | ✅ Complete | 100% | Command line argument parsing with clap |
+| Command Registry | ✅ Complete | 100% | Command registration and lookup |
+| InfoCommand | ✅ Complete | 100% | Displays media file information |
+| TrimCommand | 🔄 In Progress | 80% | Basic trimming functionality implemented |
+| ConcatCommand | 🔄 In Progress | 50% | Basic concatenation implemented |
+| Other Commands | 📝 Planned | 0% | Yet to be implemented |
+
+### Key Features Implemented
+
+1. **Application Structure**
+   - Command line argument parsing
+   - Command registry
+   - Execution context with configuration and logging
+
+2. **Core Commands**
+   - Info command
+   - Basic trim functionality
+   - Initial concatenation support
 
 ### Future Development Plans
 
-The following enhancements are planned for the CLI module:
-
 1. **Complete Core Commands**
-   - Finish implementation of Trim and Concat commands
+   - Finish implementation of trim and concat commands
    - ✅ Enhance Info command with FFmpeg media details (Completed)
-   - Add Convert command for format conversion
-   - Implement Extract command for stream extraction
+   - Add robust error handling and validation
+   - Implement progress reporting for long-running operations
 
-2. **Improve FFmpeg Integration**
+2. **Enhance FFmpeg Integration**
    - ✅ Add detailed media file analysis (Completed)
-   - Add support for more advanced FFmpeg parameters
-   - Enhance error handling for FFmpeg operations
-   - Implement batch processing capabilities
-   - Add media file comparison and validation utilities
+   - Improve FFmpeg detection and validation
+   - Add support for more encoding options
+   - Handle FFmpeg errors more gracefully
 
-3. **Audio and Subtitle Commands**
-   - Implement Volume command for audio volume adjustment
-   - Add SubtitleEdit command for subtitle editing
-   - Develop SubtitleSync command for subtitle synchronization
-
-4. **Enhanced Project Management**
-   - Add ProjectCreate and ProjectOpen commands
-   - Implement Timeline editing commands
-   - Develop Asset management commands
-
-5. **User Experience Improvements**
-   - Add shell completion support
-   - Enhance error messaging with suggestions
-   - Implement verbose logging options
-   - Add dry-run mode for command testing
+3. **Implement Advanced Commands**
+   - Add support for audio extraction and replacement
+   - Implement subtitle processing
+   - Support for batch operations
+   
+4. **User Experience Improvements**
+   - Add more detailed progress reporting
+   - Enhance error messages for better troubleshooting
+   - Add interactive mode for complex operations
 
 The CLI module will continue to evolve as the primary interface for the edv application, with a focus on usability, consistency, and integration with the growing feature set of the application. 
