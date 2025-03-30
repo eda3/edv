@@ -1,0 +1,1 @@
+window.SIDEBAR_ITEMS = {"enum":["ProjectError"],"mod":["rendering","serialization","timeline"],"struct":["AssetId","AssetMetadata","AssetReference","ClipId","Project","ProjectId","ProjectMetadata"],"type":["Result"]};

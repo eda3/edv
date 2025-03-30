@@ -1,0 +1,1 @@
+window.SIDEBAR_ITEMS = {"fn":["parse_srt_file","parse_subtitle_file","parse_webvtt_file"]};

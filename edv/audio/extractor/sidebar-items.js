@@ -1,0 +1,1 @@
+window.SIDEBAR_ITEMS = {"fn":["extract_audio","extract_segments","list_audio_streams"],"struct":["ExtractionOptions"]};
