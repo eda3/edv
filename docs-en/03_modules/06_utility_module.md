@@ -33,7 +33,7 @@ impl Duration {
     #[must_use]
     pub fn from_seconds(seconds: f64) -> Self {
             Self { seconds }
-    }
+        }
 
     /// Creates a new duration from milliseconds.
     #[must_use]
@@ -42,7 +42,7 @@ impl Duration {
             seconds: ms / 1000.0,
         }
     }
-
+    
     /// Creates a new duration from frames at a given frame rate.
     #[must_use]
     pub fn from_frames(frames: f64, fps: f64) -> Self {
@@ -50,7 +50,7 @@ impl Duration {
             seconds: frames / fps,
         }
     }
-
+    
     /// Creates a zero duration.
     #[must_use]
     pub fn zero() -> Self {
@@ -68,7 +68,7 @@ impl Duration {
     pub fn as_millis(&self) -> f64 {
         self.seconds * 1000.0
     }
-
+    
     /// Gets the duration in frames at a given frame rate.
     #[must_use]
     pub fn as_frames(&self, fps: f64) -> f64 {
@@ -109,7 +109,7 @@ impl TimePosition {
             seconds: seconds.max(0.0),
         }
     }
-
+    
     /// Creates a new time position from milliseconds.
     #[must_use]
     pub fn from_millis(ms: f64) -> Self {
@@ -117,7 +117,7 @@ impl TimePosition {
             seconds: (ms / 1000.0).max(0.0),
         }
     }
-
+    
     /// Creates a new time position from frames at a given frame rate.
     #[must_use]
     pub fn from_frames(frames: f64, fps: f64) -> Self {
@@ -125,13 +125,13 @@ impl TimePosition {
             seconds: (frames / fps).max(0.0),
         }
     }
-
+    
     /// Creates a zero time position.
     #[must_use]
     pub fn zero() -> Self {
         Self { seconds: 0.0 }
     }
-
+    
     /// Gets the time position in seconds.
     #[must_use]
     pub fn as_seconds(&self) -> f64 {
@@ -149,7 +149,7 @@ impl TimePosition {
     pub fn as_frames(&self, fps: f64) -> f64 {
         self.seconds * fps
     }
-
+    
     /// Converts the time position to a timecode string.
     #[must_use]
     pub fn to_timecode(&self, fps: f64) -> String {
@@ -234,8 +234,8 @@ impl Add for Duration {
     fn add(self, other: Self) -> Self {
         Self {
             seconds: self.seconds + other.seconds,
+            }
         }
-    }
 }
 
 impl Sub for Duration {
@@ -265,13 +265,13 @@ impl Sub<Duration> for TimePosition {
     fn sub(self, other: Duration) -> Self {
         Self {
             seconds: (self.seconds - other.as_seconds()).max(0.0),
+            }
         }
     }
-}
-
+    
 impl Sub for TimePosition {
     type Output = Duration;
-
+        
     fn sub(self, other: Self) -> Duration {
         if self.seconds <= other.seconds {
             return Duration::zero();

@@ -1,7 +1,7 @@
-﻿use crate::ffmpeg::{Error, FFmpeg, Result};
-/// `FFmpeg` command construction utilities.
+﻿/// `FFmpeg` command construction utilities.
 ///
 /// This module provides a simplified interface for building `FFmpeg` commands.
+use crate::ffmpeg::{Error, FFmpeg, Result};
 use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
 

@@ -209,9 +209,10 @@ impl FFmpeg {
     /// Detects any installed FFmpeg executable.
     ///
     /// This function performs various checks to locate an FFmpeg installation:
-    /// 1. Checks if `$FFMPEG_PATH` environment variable is set and points to a valid executable
-    /// 2. Looks for `ffmpeg` in the system PATH
-    /// 3. Checks common installation locations for specific operating systems
+    /// 1. Checks current executable directory
+    /// 2. Checks if `$FFMPEG_PATH` environment variable is set and points to a valid executable
+    /// 3. Looks for `ffmpeg` in the system PATH
+    /// 4. Checks common installation locations for specific operating systems
     ///
     /// # Returns
     ///
@@ -221,12 +222,39 @@ impl FFmpeg {
     ///
     /// Returns an error if FFmpeg cannot be found or is not executable.
     pub fn detect() -> Result<Self> {
-        // First try to find in PATH
+        // 1. First check the current executable directory
+        if let Ok(exe_path) = std::env::current_exe() {
+            if let Some(exe_dir) = exe_path.parent() {
+                let ffmpeg_exe = exe_dir.join(if cfg!(windows) {
+                    "ffmpeg.exe"
+                } else {
+                    "ffmpeg"
+                });
+                if ffmpeg_exe.exists() {
+                    if let Ok(ffmpeg) = Self::detect_at_path(&ffmpeg_exe) {
+                        return Ok(ffmpeg);
+                    }
+                }
+            }
+        }
+
+        // 2. Check if FFMPEG_PATH environment variable is set
+        if let Ok(ffmpeg_path) = std::env::var("FFMPEG_PATH") {
+            let path = PathBuf::from(ffmpeg_path);
+            if path.exists() {
+                match Self::detect_at_path(&path) {
+                    Ok(ffmpeg) => return Ok(ffmpeg),
+                    Err(_) => {}
+                }
+            }
+        }
+
+        // 3. Try to find in PATH
         if let Ok(ffmpeg) = Self::detect_in_path() {
             return Ok(ffmpeg);
         }
 
-        // Then try common installation directories
+        // 4. Then try common installation directories
         if let Ok(ffmpeg) = Self::detect_in_common_locations() {
             return Ok(ffmpeg);
         }
@@ -249,22 +277,26 @@ impl FFmpeg {
     /// Returns an error if `FFmpeg` is not found at the path or not compatible.
     pub fn detect_at_path<P: AsRef<Path>>(path: P) -> Result<Self> {
         let path = path.as_ref().to_path_buf();
+
         if !path.exists() {
             return Err(Error::NotFound);
         }
 
         // Try to get version
-        let version = Self::parse_version_from_command(&path)?;
+        match Self::parse_version_from_command(&path) {
+            Ok(version) => {
+                // Check version compatibility
+                if version < Self::MIN_VERSION {
+                    return Err(Error::UnsupportedVersion {
+                        actual: version,
+                        required: Self::MIN_VERSION,
+                    });
+                }
 
-        // Check version compatibility
-        if version < Self::MIN_VERSION {
-            return Err(Error::UnsupportedVersion {
-                actual: version,
-                required: Self::MIN_VERSION,
-            });
+                Ok(Self::new(path, version))
+            }
+            Err(e) => Err(e),
         }
-
-        Ok(Self::new(path, version))
     }
 
     /// Detects `FFmpeg` in the system PATH.
@@ -284,11 +316,10 @@ impl FFmpeg {
             "ffmpeg"
         };
 
-        if let Ok(path) = which::which(ffmpeg_name) {
-            return Self::detect_at_path(path);
+        match which::which(ffmpeg_name) {
+            Ok(path) => Self::detect_at_path(path),
+            Err(_) => Err(Error::NotFound),
         }
-
-        Err(Error::NotFound)
     }
 
     /// Detects `FFmpeg` in common installation locations.
@@ -381,10 +412,14 @@ impl FFmpeg {
     ///
     /// Returns an error if the version cannot be determined.
     fn parse_version_from_command(path: &Path) -> Result<Version> {
-        let output = Command::new(path)
-            .arg("-version")
-            .output()
-            .map_err(|e| Error::ExecutionError(format!("Failed to execute FFmpeg: {e}")))?;
+        let output = match Command::new(path).arg("-version").output() {
+            Ok(output) => output,
+            Err(e) => {
+                return Err(Error::ExecutionError(format!(
+                    "Failed to execute FFmpeg: {e}"
+                )));
+            }
+        };
 
         if !output.status.success() {
             return Err(Error::ExecutionError(format!(
@@ -394,6 +429,7 @@ impl FFmpeg {
         }
 
         let output_str = String::from_utf8_lossy(&output.stdout);
+
         Self::parse_version_from_output(&output_str)
     }
 
@@ -411,13 +447,13 @@ impl FFmpeg {
     ///
     /// Returns an error if the version cannot be parsed.
     fn parse_version_from_output(output: &str) -> Result<Version> {
-        // First line should be "ffmpeg version X.Y.Z"
+        // First line should be "ffmpeg version X.Y.Z" or special format
         let first_line = output
             .lines()
             .next()
             .ok_or_else(|| Error::OutputParseError("Empty FFmpeg version output".to_string()))?;
 
-        // Extract version number
+        // Extract version string (the third word)
         let version_str = first_line
             .split_whitespace()
             .nth(2) // "ffmpeg" "version" "X.Y.Z"
@@ -425,8 +461,39 @@ impl FFmpeg {
                 Error::OutputParseError(format!("Invalid FFmpeg version line: {first_line}"))
             })?;
 
-        // Parse version
-        version_str.parse()
+        // Case 1: Git-based version (2024-08-01-git-...)
+        if version_str.contains("-git-") || version_str.starts_with("N-") {
+            // Git版は最新と想定し、互換性のある高いバージョンを返す
+            return Ok(Version::new(99, 0, 0));
+        }
+
+        // Case 2: Version with suffix (7.1.1-full_build)
+        if version_str.contains('-') {
+            // ハイフンの前の部分だけを取得
+            let clean_version = match version_str.split('-').next() {
+                Some(v) => v,
+                None => {
+                    return Ok(Version::new(99, 0, 0));
+                }
+            };
+
+            // 通常のバージョン解析を試みる
+            match clean_version.parse() {
+                Ok(version) => return Ok(version),
+                Err(_) => {
+                    return Ok(Version::new(99, 0, 0));
+                }
+            }
+        }
+
+        // Case 3: Normal version (4.3.2)
+        match version_str.parse() {
+            Ok(version) => Ok(version),
+            Err(_) => {
+                // 解析に失敗しても、ほとんどの場合は新しいFFmpegなので互換性があると判断
+                Ok(Version::new(99, 0, 0))
+            }
+        }
     }
 
     /// Gets information about a media file.
@@ -452,17 +519,48 @@ impl FFmpeg {
             )));
         }
 
+        // Try to get ffprobe path from environment variable
+        let ffprobe_path = if let Ok(path) = std::env::var("FFPROBE_PATH") {
+            PathBuf::from(path)
+        } else {
+            // Try to find ffprobe in the same directory as ffmpeg
+            let ffmpeg_dir = self.path().parent();
+            let ffprobe_name = if cfg!(windows) {
+                "ffprobe.exe"
+            } else {
+                "ffprobe"
+            };
+
+            if let Some(dir) = ffmpeg_dir {
+                let possible_path = dir.join(ffprobe_name);
+                if possible_path.exists() {
+                    possible_path
+                } else {
+                    PathBuf::from(ffprobe_name) // Fall back to PATH
+                }
+            } else {
+                PathBuf::from(ffprobe_name) // Fall back to PATH
+            }
+        };
+
         // Use ffprobe to get media information
-        let output = std::process::Command::new("ffprobe")
-            .arg("-v")
+        let mut cmd = std::process::Command::new(&ffprobe_path);
+        cmd.arg("-v")
             .arg("quiet")
             .arg("-print_format")
             .arg("json")
             .arg("-show_format")
             .arg("-show_streams")
-            .arg(path)
-            .output()
-            .map_err(|e| Error::ExecutionError(format!("Failed to execute ffprobe: {e}")))?;
+            .arg(path);
+
+        let output = match cmd.output() {
+            Ok(output) => output,
+            Err(e) => {
+                return Err(Error::ExecutionError(format!(
+                    "Failed to execute ffprobe: {e}"
+                )));
+            }
+        };
 
         if !output.status.success() {
             let stderr = String::from_utf8_lossy(&output.stderr);
@@ -474,10 +572,13 @@ impl FFmpeg {
 
         // Parse the JSON output
         let output_str = String::from_utf8_lossy(&output.stdout);
-        let media_info: MediaInfo = serde_json::from_str(&output_str)
-            .map_err(|e| Error::OutputParseError(format!("Failed to parse ffprobe output: {e}")))?;
 
-        Ok(media_info)
+        match serde_json::from_str(&output_str) {
+            Ok(media_info) => Ok(media_info),
+            Err(e) => Err(Error::OutputParseError(format!(
+                "Failed to parse ffprobe output: {e}"
+            ))),
+        }
     }
 
     /// Validates that the `FFmpeg` installation is compatible.

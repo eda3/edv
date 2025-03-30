@@ -33,7 +33,7 @@ pub struct FFmpeg {
     path: PathBuf,
     /// The `FFmpeg` version.
     version: Version,
-}
+        }
 
 impl FFmpeg {
     /// The minimum supported `FFmpeg` version.
@@ -48,7 +48,7 @@ impl FFmpeg {
     pub fn new(path: PathBuf, version: Version) -> Self {
         Self { path, version }
     }
-
+    
     /// Gets the path to the `FFmpeg` executable.
     #[must_use]
     pub fn path(&self) -> &Path {
@@ -71,7 +71,7 @@ impl FFmpeg {
         // Then try common installation directories
         if let Ok(ffmpeg) = Self::detect_in_common_locations() {
             return Ok(ffmpeg);
-        }
+                        }
 
         Err(Error::NotFound)
     }
@@ -238,7 +238,7 @@ impl<'a> FFmpegCommand<'a> {
         self.format = Some(format);
         self
     }
-
+    
     /// Adds a video filter.
     #[must_use]
     pub fn with_video_filter(mut self, filter: &'a str) -> Self {
@@ -252,14 +252,14 @@ impl<'a> FFmpegCommand<'a> {
         self.audio_filters.push(filter);
         self
     }
-
+    
     /// Sets the seek position.
     #[must_use]
     pub fn with_seek(mut self, seek: &'a str) -> Self {
         self.seek = Some(seek);
         self
     }
-
+    
     /// Sets the duration.
     #[must_use]
     pub fn with_duration(mut self, duration: &'a str) -> Self {
