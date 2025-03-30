@@ -20,6 +20,16 @@ edv is a high-performance video editing tool that works from the command line. B
 - 🔄 **Batch Processing** - Bulk processing of multiple files, template application
 - 📝 **Project Management** - Edit history with Undo/Redo, saving and loading project files
 
+## Documentation
+
+📚 **API Documentation** is available on GitHub Pages: [https://eda3.github.io/edv/](https://eda3.github.io/edv/)
+
+The documentation includes:
+- Complete API reference
+- Module structure
+- Interface definitions
+- Usage examples
+
 ## Installation
 
 ### Prerequisites
