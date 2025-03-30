@@ -32,7 +32,7 @@ impl Duration {
     /// Creates a new duration from seconds.
     #[must_use]
     pub fn from_seconds(seconds: f64) -> Self {
-        Self { seconds }
+            Self { seconds }
     }
 
     /// Creates a new duration from milliseconds.
@@ -62,7 +62,7 @@ impl Duration {
     pub fn as_seconds(&self) -> f64 {
         self.seconds
     }
-
+    
     /// Gets the duration in milliseconds.
     #[must_use]
     pub fn as_millis(&self) -> f64 {
@@ -137,7 +137,7 @@ impl TimePosition {
     pub fn as_seconds(&self) -> f64 {
         self.seconds
     }
-
+    
     /// Gets the time position in milliseconds.
     #[must_use]
     pub fn as_millis(&self) -> f64 {
@@ -197,7 +197,7 @@ impl TimePosition {
                     .parse::<f64>()
                     .map_err(|_| format!("Invalid milliseconds: {}", ms_str))?;
                 ms_val * 10f64.powi(-(ms_str.len() as i32))
-            } else {
+        } else {
                 0.0
             };
 

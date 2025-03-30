@@ -177,7 +177,7 @@ impl<'a> FFmpegCommand<'a> {
 
 Higher-level API for building FFmpeg commands:
 
-```rust
+   ```rust
 impl<'a> FFmpegCommand<'a> {
     /// Creates a new FFmpegCommand with default settings.
     #[must_use]
@@ -280,9 +280,9 @@ impl<'a> FFmpegCommand<'a> {
 The `FFmpegCommand` API provides two different styles of command building:
 
 1. **Low-level API with mutable references**
-   
+
    The low-level API in `ffmpeg/command.rs` uses borrowing patterns:
-   ```rust
+```rust
    let mut cmd = FFmpegCommand::new(&ffmpeg);
    cmd.input(input_path)
       .output_options(&output_options)
@@ -295,7 +295,7 @@ The `FFmpegCommand` API provides two different styles of command building:
 2. **High-level API with builder pattern**
    
    The high-level API in `processing/ffmpeg_command.rs` uses the builder pattern:
-   ```rust
+```rust
    let cmd = FFmpegCommand::new()
       .with_input(input_path)
       .with_output(output_path)
