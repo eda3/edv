@@ -1,0 +1,35 @@
+name: Generate and Deploy Docs
+
+on:
+  push:
+    branches: [ main ]  # メインブランチ名に合わせて変更してね
+
+jobs:
+  docs:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v2
+      
+      - name: Setup Rust
+        uses: actions-rs/toolchain@v1
+        with:
+          profile: minimal
+          toolchain: stable
+          override: true
+      
+      - name: Generate Documentation
+        run: |
+          cargo doc --no-deps --document-private-items
+          
+          # インデックスページのリダイレクトを作成
+          echo "<meta http-equiv=\"refresh\" content=\"0; url=edv/index.html\">" > target/doc/index.html
+          
+          # GitHub Pagesのために.nojekyllファイルを作成
+          touch target/doc/.nojekyll
+      
+      - name: Deploy to GitHub Pages
+        uses: peaceiris/actions-gh-pages@v3
+        with:
+          github_token: ${{ secrets.GITHUB_TOKEN }}
+          publish_dir: ./target/doc
+          force_orphan: true 
