@@ -5,6 +5,7 @@
 /// as well as advanced operations like merging, splitting,
 /// and batch processing.
 use std::path::Path;
+use std::time::Duration;
 
 use crate::subtitle::error::{Error, Result};
 use crate::subtitle::format::{SubtitleFormat, TimePosition};
@@ -466,129 +467,125 @@ impl SubtitleEditor {
     ///
     /// Number of overlaps fixed
     pub fn fix_overlaps(&mut self, strategy: &str, min_gap: f64) -> usize {
+        self.sort_subtitles(); // Ensure subtitles are sorted by start time
+
+        // Structure to store planned modifications
+        enum Modification {
+            SetEnd(String, TimePosition),   // Subtitle ID, New End Time
+            SetStart(String, TimePosition), // Subtitle ID, New Start Time
+        }
+
+        let mut modifications = Vec::new();
         let mut fixed_count = 0;
+        let mut overlap_detected_in_pair;
 
-        // トラックからIDのみを取得し、変更が必要なペアを特定
-        let ids: Vec<String> = self.track.get_subtitle_ids();
-        let mut subtitle_pairs = Vec::new();
+        let ordered_ids = self.track.get_ordered_ids(); // Use the public method
 
-        // すべてのIDのペアを収集
-        for i in 0..ids.len() {
-            for j in i + 1..ids.len() {
-                let first_id = &ids[i];
-                let second_id = &ids[j];
+        // First pass: Detect overlaps and plan modifications
+        for i in 0..(ordered_ids.len().saturating_sub(1)) {
+            let sub1_id = &ordered_ids[i];
+            let sub2_id = &ordered_ids[i + 1];
+            overlap_detected_in_pair = false;
 
-                // 両方のサブタイトルを取得して比較（ここでは読み取りのみ）
-                let Some(first) = self.track.get_subtitle(first_id) else {
-                    continue;
-                };
-                let Some(second) = self.track.get_subtitle(second_id) else {
-                    continue;
-                };
+            // Use immutable borrows to check overlap
+            if let Some(sub1) = self.track.get_subtitle(sub1_id) {
+                if let Some(sub2) = self.track.get_subtitle(sub2_id) {
+                    if sub1.overlaps_with(sub2)
+                        || (sub2.get_start().as_seconds() - sub1.get_end().as_seconds()) < min_gap
+                    {
+                        overlap_detected_in_pair = true;
 
-                let first_start = first.get_start().as_seconds();
-                let first_end = first.get_end().as_seconds();
-                let second_start = second.get_start().as_seconds();
-                let second_end = second.get_end().as_seconds();
+                        match strategy {
+                            "shorten" => {
+                                let min_gap_secs = min_gap;
+                                let sub2_start_secs = sub2.get_start().as_seconds();
+                                let new_end_secs = sub2_start_secs - min_gap_secs;
 
-                // 時間順にならんでいることを確認
-                if first_start > second_start {
-                    continue;
+                                let new_end_time = if new_end_secs < sub1.get_start().as_seconds() {
+                                    let minimal_end_secs = sub1.get_start().as_seconds() + 0.001;
+                                    TimePosition::from_seconds(minimal_end_secs)
+                                } else {
+                                    TimePosition::from_seconds(new_end_secs)
+                                };
+                                modifications
+                                    .push(Modification::SetEnd(sub1_id.clone(), new_end_time));
+                            }
+                            "gap" => {
+                                let sub1_start_secs = sub1.get_start().as_seconds();
+                                let sub1_end_secs = sub1.get_end().as_seconds();
+                                let sub2_start_secs = sub2.get_start().as_seconds();
+                                let sub2_end_secs = sub2.get_end().as_seconds();
+
+                                let current_gap = sub2_start_secs - sub1_end_secs;
+                                let adjustment_needed = min_gap - current_gap;
+
+                                if adjustment_needed > 0.0 {
+                                    // Only adjust if gap is too small or overlaps
+                                    let adjust_each_secs = adjustment_needed / 2.0;
+
+                                    let new_end1_secs = sub1_end_secs - adjust_each_secs;
+                                    let new_start2_secs = sub2_start_secs + adjust_each_secs;
+
+                                    // Plan modification for sub1 end time
+                                    let sub1_new_end = if new_end1_secs > sub1_start_secs {
+                                        TimePosition::from_seconds(new_end1_secs)
+                                    } else {
+                                        TimePosition::from_seconds(sub1_start_secs + 0.001)
+                                    };
+                                    modifications
+                                        .push(Modification::SetEnd(sub1_id.clone(), sub1_new_end));
+
+                                    // Plan modification for sub2 start time
+                                    let sub2_new_start = if new_start2_secs < sub2_end_secs {
+                                        TimePosition::from_seconds(new_start2_secs)
+                                    } else {
+                                        let minimal_start_secs = (sub2_end_secs - 0.001)
+                                            .max(0.0)
+                                            .max(sub1_new_end.as_seconds() + min_gap);
+                                        TimePosition::from_seconds(minimal_start_secs)
+                                    };
+                                    modifications.push(Modification::SetStart(
+                                        sub2_id.clone(),
+                                        sub2_new_start,
+                                    ));
+                                }
+                            }
+                            "remove" => {
+                                eprintln!(
+                                    "Warning: 'remove' strategy not implemented in fix_overlaps"
+                                );
+                            }
+                            _ => {
+                                eprintln!("Warning: Unknown overlap fix strategy: {strategy}");
+                            }
+                        }
+                    }
                 }
-
-                // オーバーラップを確認
-                let overlap = first_end > second_start;
-                let gap_too_small = (second_start - first_end) < min_gap;
-
-                if overlap || gap_too_small {
-                    subtitle_pairs.push((
-                        first_id.clone(),
-                        second_id.clone(),
-                        first_start,
-                        first_end,
-                        second_start,
-                        second_end,
-                        overlap,
-                        gap_too_small,
-                    ));
-                }
+            }
+            if overlap_detected_in_pair {
+                fixed_count += 1; // Count pairs where an overlap/gap issue was detected and a modification planned
             }
         }
 
-        // 各ペアに対して、オーバーラップ修正を適用
-        for (
-            first_id,
-            second_id,
-            first_start,
-            first_end,
-            second_start,
-            _second_end,
-            overlap,
-            gap_too_small,
-        ) in subtitle_pairs
-        {
-            match strategy {
-                "shorten_first" => {
-                    if overlap {
-                        // 変更を適用
-                        if let Some(subtitle) = self.track.get_subtitle_mut(&first_id) {
-                            subtitle.set_end(TimePosition::from_seconds(second_start));
-                            fixed_count += 1;
-                        }
+        // Second pass: Apply planned modifications
+        for modification in modifications {
+            match modification {
+                Modification::SetEnd(id, new_end) => {
+                    if let Some(subtitle) = self.track.get_subtitle_mut(&id) {
+                        subtitle.set_end(new_end);
                     }
                 }
-                "shorten_both" => {
-                    if overlap {
-                        // 中間点を計算
-                        let mid_point = (first_end + second_start) / 2.0;
-
-                        // 変更を適用
-                        if let Some(subtitle) = self.track.get_subtitle_mut(&first_id) {
-                            subtitle.set_end(TimePosition::from_seconds(mid_point));
-                            fixed_count += 1;
-                        }
-
-                        if let Some(subtitle) = self.track.get_subtitle_mut(&second_id) {
-                            subtitle.set_start(TimePosition::from_seconds(mid_point));
-                            fixed_count += 1;
-                        }
+                Modification::SetStart(id, new_start) => {
+                    if let Some(subtitle) = self.track.get_subtitle_mut(&id) {
+                        subtitle.set_start(new_start);
                     }
                 }
-                "add_gap" => {
-                    if overlap || gap_too_small {
-                        // 必要なギャップを追加
-                        let required_gap = min_gap;
-
-                        let new_first_end = second_start - required_gap;
-
-                        // もし逆転してしまうなら、中間点を使用
-                        let (first_end_time, second_start_time) = if new_first_end < first_start {
-                            let mid = (first_start + second_start) / 2.0;
-                            (mid, mid + required_gap)
-                        } else {
-                            (new_first_end, second_start)
-                        };
-
-                        // 変更を適用
-                        if let Some(subtitle) = self.track.get_subtitle_mut(&first_id) {
-                            subtitle.set_end(TimePosition::from_seconds(first_end_time));
-                            fixed_count += 1;
-                        }
-
-                        if let Some(subtitle) = self.track.get_subtitle_mut(&second_id) {
-                            subtitle.set_start(TimePosition::from_seconds(second_start_time));
-                            fixed_count += 1;
-                        }
-                    }
-                }
-                _ => {} // 未知の戦略は無視
             }
         }
 
         if fixed_count > 0 {
             self.modified = true;
         }
-
         fixed_count
     }
 
@@ -671,7 +668,7 @@ impl Default for SubtitleEditor {
 #[cfg(test)]
 mod tests {
     use super::*;
-    
+
     use tempfile::NamedTempFile;
 
     fn create_test_track() -> SubtitleTrack {

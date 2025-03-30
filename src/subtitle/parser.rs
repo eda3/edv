@@ -29,8 +29,8 @@ pub fn parse_subtitle_file<P: AsRef<Path>>(
     if let Some(format) = format {
         match format {
             SubtitleFormat::Srt => parse_srt(&content),
-            SubtitleFormat::WebVtt | SubtitleFormat::Vtt => parse_vtt(&content),
-            SubtitleFormat::Ass | SubtitleFormat::AdvancedSsa => parse_ssa(&content),
+            SubtitleFormat::WebVtt => parse_vtt(&content),
+            SubtitleFormat::AdvancedSsa => parse_ssa(&content),
             SubtitleFormat::SubViewer => parse_subviewer(&content),
             SubtitleFormat::MicroDVD => Err(Error::unsupported_parser_format("MicroDVD")),
         }
@@ -44,8 +44,8 @@ pub fn parse_subtitle_file<P: AsRef<Path>>(
 
         match format {
             SubtitleFormat::Srt => parse_srt(&content),
-            SubtitleFormat::WebVtt | SubtitleFormat::Vtt => parse_vtt(&content),
-            SubtitleFormat::Ass | SubtitleFormat::AdvancedSsa => parse_ssa(&content),
+            SubtitleFormat::WebVtt => parse_vtt(&content),
+            SubtitleFormat::AdvancedSsa => parse_ssa(&content),
             SubtitleFormat::SubViewer => parse_subviewer(&content),
             SubtitleFormat::MicroDVD => Err(Error::unsupported_parser_format("MicroDVD")),
         }
@@ -310,105 +310,12 @@ fn parse_time(time_str: &str) -> Result<TimePosition> {
 pub fn parse_webvtt_file<P: AsRef<Path>>(path: P) -> Result<SubtitleTrack> {
     let file = File::open(path.as_ref())?;
     let reader = BufReader::new(file);
-    let lines: Vec<String> = reader.lines().collect::<io::Result<Vec<String>>>()?;
+    let content = reader
+        .lines()
+        .collect::<io::Result<Vec<String>>>()?
+        .join("\n");
 
-    let mut track = SubtitleTrack::new();
-    let mut index = 0;
-
-    // Check for WebVTT header
-    if lines.is_empty() || !lines[0].trim().starts_with("WEBVTT") {
-        return Err(Error::invalid_subtitle_format("Missing `WebVTT` header"));
-    }
-    index += 1;
-
-    // Skip header until we find an empty line
-    while index < lines.len() && !lines[index].trim().is_empty() {
-        index += 1;
-    }
-
-    // Skip any empty lines
-    while index < lines.len() && lines[index].trim().is_empty() {
-        index += 1;
-    }
-
-    let mut subtitle_count = 0;
-    while index < lines.len() {
-        // Skip empty lines and comments
-        if lines[index].trim().is_empty() || lines[index].trim().starts_with("NOTE ") {
-            index += 1;
-            continue;
-        }
-
-        // Check if this line is a cue identifier or a timestamp
-        let mut cue_id = String::new();
-        let timestamp_line;
-
-        if index + 1 < lines.len() && lines[index + 1].contains("-->") {
-            // This line is a cue identifier
-            cue_id = lines[index].trim().to_string();
-            index += 1;
-            timestamp_line = &lines[index];
-        } else if lines[index].contains("-->") {
-            // This line is already a timestamp
-            timestamp_line = &lines[index];
-        } else {
-            // Invalid format
-            return Err(Error::invalid_subtitle_format("Expected timestamp line"));
-        }
-
-        // Parse timestamps
-        let times: Vec<&str> = timestamp_line.split("-->").collect();
-        let times_len = times.len();
-        if times_len != 2 {
-            return Err(Error::invalid_subtitle_format("Invalid time format"));
-        }
-
-        let (time_part, settings_part) = match times[1].find(' ') {
-            Some(pos) => times[1].split_at(pos),
-            None => (times[1], ""),
-        };
-
-        let start_time = TimePosition::from_vtt_string(times[0].trim())?;
-        let end_time = TimePosition::from_vtt_string(time_part.trim())?;
-
-        // TODO: Parse cue settings from settings_part
-        let _settings = settings_part.trim();
-
-        index += 1;
-
-        // Parse text content (until empty line or end of file)
-        if index >= lines.len() {
-            return Err(Error::invalid_subtitle_format("Unexpected end of file"));
-        }
-
-        let mut text = String::new();
-        while index < lines.len() && !lines[index].trim().is_empty() {
-            if !text.is_empty() {
-                text.push('\n');
-            }
-            text.push_str(&lines[index]);
-            index += 1;
-        }
-
-        // Create and add subtitle
-        subtitle_count += 1;
-        let id = if cue_id.is_empty() {
-            subtitle_count.to_string()
-        } else {
-            cue_id
-        };
-
-        let subtitle = Subtitle::new(start_time, end_time, text).with_id(id);
-        track.add_subtitle(subtitle);
-
-        // Skip any empty lines
-        while index < lines.len() && lines[index].trim().is_empty() {
-            index += 1;
-        }
-    }
-
-    track.sort();
-    Ok(track)
+    parse_vtt(&content)
 }
 
 /// Parses `WebVTT` format subtitle content.
@@ -420,67 +327,91 @@ fn parse_vtt(content: &str) -> Result<SubtitleTrack> {
     let mut track = SubtitleTrack::new();
     let mut lines = content.lines();
 
-    // Skip the WEBVTT header
-    let mut header_found = false;
-    for line in lines.by_ref() {
-        if line.trim().starts_with("WEBVTT") {
-            header_found = true;
-            break;
-        }
-    }
+    // Skip "WEBVTT" header and potential blank lines
+    // Find the start of cues, handling potential initial comments/styles
+    let mut line_iter = lines.skip_while(|line| line.trim().is_empty() || line.trim() == "WEBVTT");
 
-    if !header_found {
-        return Err(Error::parse_error_with_reason("Missing `WEBVTT` header"));
-    }
+    let mut current_id: Option<String> = None;
+    let mut current_timing: Option<String> = None;
+    let mut current_text: Vec<String> = Vec::new();
+    let mut processing_cue = false;
+    let mut unnamed_cue_counter = 1; // Counter for cues without explicit IDs
 
-    // Process the rest of the file
-    let mut current_id = String::new();
-    let mut current_timing = String::new();
-    let mut current_text = Vec::new();
-    let mut in_subtitle = false;
-    let mut subtitle_count = 0;
-
-    for line in lines {
+    // Process lines using the iterator
+    while let Some(line) = line_iter.next() {
         let trimmed = line.trim();
 
         if trimmed.is_empty() {
-            if in_subtitle && !current_text.is_empty() {
-                // End of a subtitle entry
-                let subtitle =
-                    parse_vtt_entry(&current_id, &current_timing, &current_text.join("\n"))?;
+            // Blank line signifies the end of a cue block or separates cues.
+            if processing_cue && current_timing.is_some() {
+                // Finalize the previous cue
+                let id_to_use = match current_id.take() {
+                    Some(id) if !id.is_empty() => id,
+                    _ => {
+                        // Generate ID if None or empty
+                        let generated_id = unnamed_cue_counter.to_string();
+                        unnamed_cue_counter += 1;
+                        generated_id
+                    }
+                };
+
+                let timing = current_timing.take().unwrap_or_default();
+                let text = current_text.join("\n");
+                let subtitle = parse_vtt_entry(&id_to_use, &timing, &text)?;
                 track.add_subtitle(subtitle);
 
-                // Reset for next entry
-                current_id.clear();
-                current_timing.clear();
+                // Reset for the next cue
                 current_text.clear();
-                in_subtitle = false;
+                processing_cue = false; // Finished processing this cue
             }
-        } else if trimmed.contains(" --> ") {
-            // This is a timing line
-            current_timing = trimmed.to_string();
-            in_subtitle = true;
-            subtitle_count += 1;
+            continue; // Skip blank lines otherwise
+        }
 
-            // If we don't have an ID, use the subtitle count
-            if current_id.is_empty() {
-                current_id = subtitle_count.to_string();
+        if trimmed.starts_with("NOTE") || trimmed.starts_with("STYLE") {
+            // Skip comments and style blocks
+            // Handle potential multi-line blocks if needed later
+            // Ensure state is reset if a comment interrupts a cue definition
+            if !processing_cue {
+                current_id = None;
             }
-        } else if in_subtitle {
-            // This is part of the text content
+            continue;
+        }
+
+        // If it contains "-->", it's a timing line
+        if trimmed.contains("-->") {
+            // If timing appears before text, finalize any preceding ID-only line
+            // This handles cases like ID\nTIMING\nTEXT
+            current_timing = Some(trimmed.to_string());
+            processing_cue = true; // Start processing this cue block (ID or not)
+        } else if processing_cue {
+            // If we are processing a cue (have seen timing), this line is text
             current_text.push(trimmed.to_string());
         } else {
-            // This might be a cue identifier
-            current_id = trimmed.to_string();
+            // If not processing a cue and it's not blank/comment/timing,
+            // it must be a cue identifier.
+            current_id = Some(trimmed.to_string());
+            // Reset text buffer in case of ID -> ID sequences
+            current_text.clear();
         }
     }
 
-    // Add the last subtitle if there is one
-    if in_subtitle && !current_text.is_empty() {
-        let subtitle = parse_vtt_entry(&current_id, &current_timing, &current_text.join("\n"))?;
+    // Add the last subtitle if buffer is not empty
+    if processing_cue && current_timing.is_some() {
+        let id_to_use = match current_id.take() {
+            Some(id) if !id.is_empty() => id,
+            _ => {
+                let generated_id = unnamed_cue_counter.to_string();
+                // unnamed_cue_counter += 1; // No need to increment after loop
+                generated_id
+            }
+        };
+        let timing = current_timing.unwrap_or_default();
+        let text = current_text.join("\n");
+        let subtitle = parse_vtt_entry(&id_to_use, &timing, &text)?;
         track.add_subtitle(subtitle);
     }
 
+    track.sort();
     Ok(track)
 }
 
@@ -515,63 +446,77 @@ fn parse_vtt_entry(id: &str, timing: &str, text: &str) -> Result<Subtitle> {
 ///
 /// Returns an error if the time can't be parsed
 fn parse_vtt_time(time_str: &str) -> Result<TimePosition> {
-    let parts: Vec<&str> = time_str.split(':').collect();
-
-    if parts.len() == 3 {
-        // Format is HH:MM:SS.mmm
-        let hours: u32 = parts[0]
-            .parse()
-            .map_err(|_| Error::parse_error_with_reason(format!("Invalid hours: {}", parts[0])))?;
-
-        let minutes: u32 = parts[1].parse().map_err(|_| {
-            Error::parse_error_with_reason(format!("Invalid minutes: {}", parts[1]))
-        })?;
-
-        let seconds_parts: Vec<&str> = parts[2].split('.').collect();
-        let seconds: u32 = seconds_parts[0].parse().map_err(|_| {
-            Error::parse_error_with_reason(format!("Invalid seconds: {}", seconds_parts[0]))
-        })?;
-
-        let milliseconds = if seconds_parts.len() > 1 {
-            let mut ms_str = seconds_parts[1].to_string();
-            while ms_str.len() < 3 {
-                ms_str.push('0');
-            }
-            ms_str.truncate(3);
-            ms_str.parse().unwrap_or(0)
-        } else {
-            0
-        };
-
-        Ok(TimePosition::new(hours, minutes, seconds, milliseconds))
-    } else if parts.len() == 2 {
-        // Format is MM:SS.mmm
-        let minutes: u32 = parts[0].parse().map_err(|_| {
-            Error::parse_error_with_reason(format!("Invalid minutes: {}", parts[0]))
-        })?;
-
-        let seconds_parts: Vec<&str> = parts[1].split('.').collect();
-        let seconds: u32 = seconds_parts[0].parse().map_err(|_| {
-            Error::parse_error_with_reason(format!("Invalid seconds: {}", seconds_parts[0]))
-        })?;
-
-        let milliseconds = if seconds_parts.len() > 1 {
-            let mut ms_str = seconds_parts[1].to_string();
-            while ms_str.len() < 3 {
-                ms_str.push('0');
-            }
-            ms_str.truncate(3);
-            ms_str.parse().unwrap_or(0)
-        } else {
-            0
-        };
-
-        Ok(TimePosition::new(0, minutes, seconds, milliseconds))
-    } else {
-        Err(Error::parse_error_with_reason(format!(
-            "Invalid time format: {time_str}"
-        )))
+    if time_str.is_empty() {
+        return Err(Error::timing_error(
+            "Cannot parse empty string as VTT time".to_string(),
+        ));
     }
+
+    let parts: Vec<&str> = time_str.split(':').collect();
+    let (hours, minutes, seconds_str) = match parts.len() {
+        3 => (
+            parts[0]
+                .parse::<u32>()
+                .map_err(|_| Error::timing_error(format!("Invalid VTT hours: {}", parts[0])))?,
+            parts[1]
+                .parse::<u32>()
+                .map_err(|_| Error::timing_error(format!("Invalid VTT minutes: {}", parts[1])))?,
+            parts[2],
+        ),
+        2 => (
+            0,
+            parts[0]
+                .parse::<u32>()
+                .map_err(|_| Error::timing_error(format!("Invalid VTT minutes: {}", parts[0])))?,
+            parts[1],
+        ),
+        _ => {
+            return Err(Error::timing_error(format!(
+                "Invalid VTT time format (parts): {time_str}"
+            )));
+        }
+    };
+
+    // Split seconds and milliseconds more robustly
+    let seconds: u32;
+    let milliseconds: u32;
+    if let Some((sec_str, ms_str)) = seconds_str.split_once('.') {
+        seconds = sec_str
+            .parse()
+            .map_err(|_| Error::timing_error(format!("Invalid VTT seconds: {}", sec_str)))?;
+        // Parse milliseconds, handling padding and truncation
+        let mut ms_padded = ms_str.to_string();
+        if ms_padded.is_empty() {
+            // Handle case like "SS." -> ms = 0
+            milliseconds = 0;
+        } else {
+            while ms_padded.len() < 3 {
+                ms_padded.push('0');
+            }
+            ms_padded.truncate(3);
+            milliseconds = ms_padded.parse().map_err(|_| {
+                Error::timing_error(format!("Invalid VTT milliseconds: {}", ms_str))
+            })?;
+        }
+    } else {
+        // No milliseconds part found
+        seconds = seconds_str
+            .parse()
+            .map_err(|_| Error::timing_error(format!("Invalid VTT seconds: {}", seconds_str)))?;
+        milliseconds = 0;
+    }
+
+    // Validate components
+    if minutes > 59 || seconds > 59
+    // milliseconds > 999 // Should be handled by parsing logic now
+    // VTT allows large hours, and MM:SS minutes check is implicit if seconds/ms parsed ok
+    {
+        return Err(Error::timing_error(format!(
+            "VTT time component out of range (MM/SS): {time_str}"
+        )));
+    }
+
+    Ok(TimePosition::new(hours, minutes, seconds, milliseconds))
 }
 
 /// Stub for parsing SSA/ASS format subtitles.
@@ -674,11 +619,13 @@ mod tests {
 
         let subtitles = track.get_subtitles();
 
+        // Check first cue (no ID in file -> generated ID "1")
         assert_eq!(subtitles[0].get_id(), "1");
         assert_eq!(subtitles[0].get_start().as_seconds(), 1.0);
         assert_eq!(subtitles[0].get_end().as_seconds(), 4.0);
         assert_eq!(subtitles[0].get_text(), "This is the first subtitle");
 
+        // Check second cue (explicit ID "cue-2")
         assert_eq!(subtitles[1].get_id(), "cue-2");
         assert_eq!(subtitles[1].get_start().as_seconds(), 5.5);
         assert_eq!(subtitles[1].get_end().as_seconds(), 7.5);
@@ -687,7 +634,8 @@ mod tests {
             "This is the second subtitle\nIt has multiple lines"
         );
 
-        assert_eq!(subtitles[2].get_id(), "3");
+        // Check third cue (no ID in file -> generated ID "2")
+        assert_eq!(subtitles[2].get_id(), "2");
         assert_eq!(subtitles[2].get_start().as_seconds(), 60.0);
         assert_eq!(subtitles[2].get_end().as_seconds(), 90.0);
         assert_eq!(subtitles[2].get_text(), "This is the third subtitle");

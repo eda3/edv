@@ -180,14 +180,10 @@ impl FromStr for TimePosition {
 #[must_use]
 #[allow(dead_code)]
 pub fn file_has_extension(path: &Path, expected_extension: &str) -> bool {
-    if !path.is_file() {
-        return false;
-    }
-
-    match path.extension() {
-        Some(ext) => ext.eq_ignore_ascii_case(expected_extension),
-        None => false,
-    }
+    path.extension()
+        .and_then(|ext| ext.to_str())
+        .map(|ext| ext.eq_ignore_ascii_case(expected_extension))
+        .unwrap_or(false)
 }
 
 /// Gets all media files in a directory with the specified extensions.

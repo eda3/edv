@@ -15,15 +15,9 @@ pub enum SubtitleFormat {
     Srt,
 
     /// `WebVTT` format (.vtt)
-    Vtt,
-
-    /// `WebVTT` format (.vtt) - 別名
     WebVtt,
 
     /// Advanced `SubStation` Alpha (.ass, .ssa)
-    Ass,
-
-    /// Advanced `SubStation` Alpha (.ass, .ssa) - 別名
     AdvancedSsa,
 
     /// `SubViewer` format (.sub)
@@ -39,8 +33,8 @@ impl SubtitleFormat {
     pub fn extension(&self) -> &'static str {
         match self {
             Self::Srt => "srt",
-            Self::Vtt | Self::WebVtt => "vtt",
-            Self::Ass | Self::AdvancedSsa => "ass",
+            Self::WebVtt => "vtt",
+            Self::AdvancedSsa => "ass",
             Self::SubViewer | Self::MicroDVD => "sub",
         }
     }
@@ -50,8 +44,8 @@ impl SubtitleFormat {
     pub fn mime_type(&self) -> &'static str {
         match self {
             Self::Srt => "application/x-subrip",
-            Self::Vtt | Self::WebVtt => "text/vtt",
-            Self::Ass | Self::AdvancedSsa => "text/x-ssa",
+            Self::WebVtt => "text/vtt",
+            Self::AdvancedSsa => "text/x-ssa",
             Self::SubViewer | Self::MicroDVD => "text/x-sub",
         }
     }
@@ -169,8 +163,8 @@ impl SubtitleFormat {
     pub fn to_extension(&self) -> &'static str {
         match self {
             Self::Srt => "srt",
-            Self::WebVtt | Self::Vtt => "vtt",
-            Self::AdvancedSsa | Self::Ass => "ass",
+            Self::WebVtt => "vtt",
+            Self::AdvancedSsa => "ass",
             Self::SubViewer | Self::MicroDVD => "sub",
         }
     }
@@ -179,8 +173,8 @@ impl SubtitleFormat {
     pub fn to_mime(&self) -> &'static str {
         match self {
             Self::Srt => "text/x-srt",
-            Self::WebVtt | Self::Vtt => "text/vtt",
-            Self::AdvancedSsa | Self::Ass => "text/x-ass",
+            Self::WebVtt => "text/vtt",
+            Self::AdvancedSsa => "text/x-ass",
             Self::SubViewer | Self::MicroDVD => "text/x-sub",
         }
     }
@@ -189,8 +183,8 @@ impl SubtitleFormat {
     pub fn to_name(&self) -> &'static str {
         match self {
             Self::Srt => "SubRip",
-            Self::Vtt | Self::WebVtt => "WebVTT",
-            Self::Ass | Self::AdvancedSsa => "Advanced SubStation Alpha",
+            Self::WebVtt => "WebVTT",
+            Self::AdvancedSsa => "Advanced SubStation Alpha",
             Self::SubViewer => "SubViewer",
             Self::MicroDVD => "MicroDVD",
         }
@@ -199,14 +193,7 @@ impl SubtitleFormat {
 
 impl fmt::Display for SubtitleFormat {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        let name = match self {
-            Self::Srt => "SubRip",
-            Self::Vtt | Self::WebVtt => "WebVTT",
-            Self::Ass | Self::AdvancedSsa => "Advanced SubStation Alpha",
-            Self::SubViewer => "SubViewer",
-            Self::MicroDVD => "MicroDVD",
-        };
-        write!(f, "{name}")
+        write!(f, "{}", self.to_name())
     }
 }
 
@@ -217,7 +204,7 @@ impl FromStr for SubtitleFormat {
         match s.to_lowercase().as_str() {
             "srt" | "subrip" => Ok(Self::Srt),
             "vtt" | "webvtt" => Ok(Self::WebVtt),
-            "ass" | "ssa" => Ok(Self::AdvancedSsa),
+            "ass" | "ssa" | "advanced substation alpha" => Ok(Self::AdvancedSsa),
             "subviewer" | "sub" => Ok(Self::SubViewer),
             "microdvd" => Ok(Self::MicroDVD),
             _ => Err(Error::formatting_error(format!(
@@ -522,15 +509,15 @@ mod tests {
         );
         assert_eq!(
             SubtitleFormat::from_extension("test.vtt").unwrap(),
-            SubtitleFormat::Vtt
+            SubtitleFormat::WebVtt
         );
         assert_eq!(
             SubtitleFormat::from_extension("test.ass").unwrap(),
-            SubtitleFormat::Ass
+            SubtitleFormat::AdvancedSsa
         );
         assert_eq!(
             SubtitleFormat::from_extension("test.ssa").unwrap(),
-            SubtitleFormat::Ass
+            SubtitleFormat::AdvancedSsa
         );
         assert_eq!(
             SubtitleFormat::from_extension("test.sub").unwrap(),
@@ -575,9 +562,7 @@ mod tests {
     fn test_format_display_and_parsing() {
         let formats = [
             SubtitleFormat::Srt,
-            SubtitleFormat::Vtt,
             SubtitleFormat::WebVtt,
-            SubtitleFormat::Ass,
             SubtitleFormat::AdvancedSsa,
             SubtitleFormat::SubViewer,
             SubtitleFormat::MicroDVD,

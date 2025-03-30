@@ -277,21 +277,19 @@ impl SubtitleTrack {
 
     /// Adds a subtitle to the track.
     pub fn add_subtitle(&mut self, subtitle: Subtitle) {
+        // Use the ID provided by the Subtitle object directly.
+        // Do not auto-generate IDs if the provided ID is empty, especially during parsing
+        // where empty IDs might be intentional according to the format (e.g., WebVTT).
         let id = subtitle.get_id().to_string();
 
-        // If ID is empty, generate a new one
-        let id = if id.is_empty() {
-            let new_id = (self.subtitles.len() + 1).to_string();
-            let mut sub = subtitle;
-            sub.set_id(new_id.clone());
-            self.subtitles.insert(new_id.clone(), sub);
-            new_id
-        } else {
-            self.subtitles.insert(id.clone(), subtitle);
-            id
-        };
+        // Insert the subtitle with its given ID.
+        // If an ID collision occurs, the previous subtitle with the same ID will be overwritten.
+        // More robust handling (e.g., error or generating a unique ID *only* on collision
+        // if required by editor logic) might be needed depending on overall requirements.
+        self.subtitles.insert(id.clone(), subtitle);
 
-        // Add to order if not already there
+        // Add to order vector if the ID is not already present.
+        // This ensures the iteration order includes the newly added/overwritten subtitle.
         if !self.order.contains(&id) {
             self.order.push(id);
         }
@@ -356,6 +354,16 @@ impl SubtitleTrack {
         // 代わりに、HashMap内の値を直接取得するのではなく
         // Vecの構築にはHashMap::values_mutを使用する
         self.subtitles.values_mut().collect()
+    }
+
+    /// Gets all subtitle IDs in their current order.
+    ///
+    /// # Returns
+    ///
+    /// A vector containing all subtitle IDs in the order they are stored.
+    #[must_use]
+    pub fn get_ordered_ids(&self) -> Vec<String> {
+        self.order.clone()
     }
 
     /// Gets subtitles in a specific time range.

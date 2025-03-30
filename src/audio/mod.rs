@@ -6,13 +6,17 @@
 ///
 /// # Examples
 ///
-/// ```
-/// // Volume adjustment example (will be implemented)
-/// use edv::audio::volume::adjust_volume;
+/// ```rust,no_run // Add no_run to prevent running during tests if ffmpeg isn't present
 /// use edv::ffmpeg::FFmpeg;
+/// use edv::audio::volume::{adjust_volume, VolumeAdjustment};
+/// use std::path::Path;
 ///
-/// let ffmpeg = FFmpeg::locate().unwrap();
-/// adjust_volume(ffmpeg, "input.mp4", "output.mp4", 1.5);
+/// # fn main() -> Result<(), Box<dyn std::error::Error>> { // Add main fn for compilability
+/// // Assuming ffmpeg is in PATH
+/// let ffmpeg = FFmpeg::detect()?; // Use detect() instead of locate()
+/// adjust_volume(&ffmpeg, Path::new("input.mp4"), Path::new("output.mp4"), VolumeAdjustment::Decibel(-6.0))?;
+/// # Ok(())
+/// # }
 /// ```
 // Re-export public types from submodules
 pub use self::error::Error;
@@ -94,6 +98,36 @@ pub mod common {
         20.0 * linear.max(1e-10).log10()
     }
 }
+
+/// Wraps `std::result::Result` with `audio::Error` as the default error type.
+///
+/// # Examples
+///
+/// ```rust,no_run // Add no_run
+/// use edv::ffmpeg::FFmpeg;
+/// use edv::audio::volume::{adjust_volume, VolumeAdjustment};
+/// use edv::audio::Result;
+/// use std::path::Path;
+///
+/// # fn main() -> Result<(), Box<dyn std::error::Error>> { // Add main fn
+/// fn process_audio() -> Result<()> {
+///     let ffmpeg = FFmpeg::detect()?; // Use detect()
+///     adjust_volume(
+///         &ffmpeg,
+///         Path::new("input.mp4"),
+///         Path::new("output.mp4"),
+///         VolumeAdjustment::Linear(0.5) // Use VolumeAdjustment variant
+///     )?;
+///     Ok(())
+/// }
+///
+/// if let Err(e) = process_audio() {
+///     eprintln!("Audio processing failed: {}", e);
+/// }
+/// # Ok(())
+/// # }
+/// ```
+// pub type Result<T> = std::result::Result<T, Error>; // REMOVED: Conflicts with re-export
 
 #[cfg(test)]
 mod tests {
