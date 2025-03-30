@@ -1,228 +1,230 @@
-# レンダリングモジュール
+# Rendering Module
 
-レンダリングモジュールは、タイムラインプロジェクトをビデオファイルにレンダリングするための機能を提供します。
-複数のトラックの合成、エフェクト、進捗状況のモニタリングをサポートしています。
+## Overview
 
-## 主要コンポーネント
+The Rendering Module provides functionality to render EDV projects into final video files. This module implements features for compositing timelines with multiple tracks, applying effects, monitoring progress, and managing render caches.
 
-### レンダリングキャッシュシステム
+## Structure
 
-レンダリングキャッシュシステムは、レンダリングされたアセットと中間ファイルをキャッシュして、
-レンダリングのパフォーマンスを向上させます。キャッシュされたアセットを再利用することで、
-同じアセットを何度もレンダリングする必要がなくなり、プロジェクトの読み込みと編集のスピードが向上します。
+The Rendering Module is located in the `src/project/rendering` directory and consists of the following files:
 
-```rust
-pub struct RenderCache {
-    /// キャッシュファイルのルートディレクトリ
-    cache_dir: PathBuf,
-    /// キャッシュキーによってインデックス付けされたキャッシュエントリ
-    entries: HashMap<CacheKey, CacheEntry>,
-    /// キャッシュの最大サイズ（バイト単位）
-    max_size: Option<u64>,
-    /// キャッシュの現在のサイズ（バイト単位）
-    current_size: u64,
-    /// キャッシュが有効かどうか
-    enabled: bool,
-}
-```
+- `mod.rs`: Module entry point and error type definitions
+- `config.rs`: Rendering configuration definitions
+- `pipeline.rs`: Rendering pipeline implementation
+- `compositor.rs`: Track composition functionality
+- `cache.rs`: Rendering cache management
+- `progress.rs`: Rendering progress tracking
 
-#### 主な機能
-
-1. **アセットの自動レンダリング**：プロジェクト読み込み時にアセットを自動的にレンダリングし、編集時のパフォーマンスを向上
-2. **インテリジェントなキャッシュ戦略**：使用頻度の低いアセットを古い順に削除し、キャッシュサイズを管理
-3. **レンダリングパラメータのハッシュ化**：レンダリング設定に基づいて正確なキャッシュキーを生成
-4. **複雑なタイムラインの最適化**：複雑なタイムラインのレンダリングを最適化するための並列処理をサポート
-
-#### キャッシュエントリの構造
-
-```rust
-pub struct CacheEntry {
-    /// キャッシュされたファイルへのパス
-    pub path: PathBuf,
-    /// キャッシュされたファイルのメタデータ
-    pub metadata: CacheMetadata,
-}
-
-pub struct CacheMetadata {
-    /// キャッシュされたファイルが作成された日時
-    pub created_at: SystemTime,
-    /// ソースアセットID
-    pub source_asset_id: AssetId,
-    /// キャッシュされたコンテンツの長さ
-    pub duration: Duration,
-    /// レンダリングパラメータのハッシュ
-    pub params_hash: u64,
-    /// キャッシュされたファイルのサイズ（バイト単位）
-    pub file_size: u64,
-}
-```
-
-#### 実装の詳細
-
-キャッシュシステムは以下の流れで動作します：
-
-1. **キャッシュの初期化**：指定されたディレクトリでキャッシュを初期化し、既存のキャッシュエントリを読み込みます
-2. **キャッシュキーの生成**：アセットIDとレンダリングパラメータからハッシュベースのキャッシュキーを生成します
-3. **キャッシュの確認**：アセットをレンダリングする前に、対応するキャッシュエントリがあるかチェックします
-4. **キャッシュの追加**：新しくレンダリングされたアセットをキャッシュに追加し、メタデータを保存します
-5. **キャッシュの管理**：キャッシュサイズが最大サイズを超えた場合、古いエントリを削除します
-6. **キャッシュの無効化**：アセットが変更された場合、関連するキャッシュエントリを無効化します
-
-このシステムにより、レンダリングプロセスが大幅に高速化され、特に複雑なプロジェクトや大きなメディアファイルを扱う場合に効果的です。
-
-### アセット準備機能
-
-アセット準備機能は、プロジェクト読み込み時にバックグラウンドでアセットを自動的に前処理します。この機能により：
-
-- 編集作業中のレスポンス向上（素材がすでに処理済み）
-- レンダリング開始時の待ち時間短縮
-- 複雑なプロジェクトでも快適な操作性を実現
-
-```rust
-// Project構造体に追加された新メソッド
-pub fn prepare_assets(&self, config: Option<rendering::RenderConfig>) -> Result<()> {
-    // アセットの前処理を実行
-}
-```
-
-アセットが事前に準備されていると、エディターはそれらをすぐに表示でき、レンダリングジョブも遅延なく開始できます。これは特に、多くの高解像度アセットや複雑なエフェクトを含むプロジェクトで、編集中のラグを防ぐのに役立ちます。
-
-### TrackCompositor
-
-`TrackCompositor`はタイムラインの複数のトラックをまとめて合成し、最終的なビデオファイルを生成する役割を担います。
-
-```rust
-pub struct TrackCompositor {
-    /// 合成するタイムライン
-    timeline: Timeline,
-    /// 利用可能なアセット
-    assets: Vec<AssetReference>,
-    /// 合成中に作成された中間ファイル
-    intermediate_files: Vec<IntermediateFile>,
-    /// 合成の進捗状況を追跡するトラッカー
-    progress: Option<SharedProgressTracker>,
-    /// 複雑なタイムラインを最適化するかどうか
-    optimize_complex: bool,
-}
-```
-
-複雑なタイムラインのためのパフォーマンス最適化機能も組み込まれており、CPUコア数に基づいて処理を並列化します。
-
-### CPU最適化機能の詳細
-
-複雑なタイムラインの最適化機能は、特に以下のケースで効果を発揮します：
-
-- 多数のトラック（4つ以上）を含むプロジェクト
-- 高解像度（4K以上）の素材を扱う場合
-- エフェクトやトランジションを多用するプロジェクト
-
-```rust
-// TrackCompositorに追加された新機能
-pub fn set_optimize_complex(&mut self, optimize: bool) {
-    self.optimize_complex = optimize;
-}
-```
-
-この機能は利用可能なCPUコア数を自動検出し、最適なスレッド数で並列処理を行います。例えば8コアのCPUでは、最大で4つの並列処理を実行し、パフォーマンスを大幅に向上させます。
-
-アルゴリズムは以下の要素に基づいて動的に調整されます：
-- 利用可能なシステムメモリ
-- 現在のCPU負荷
-- コンテンツの複雑さ（エフェクト数、解像度など）
+## Key Components
 
 ### RenderConfig
 
-`RenderConfig`はレンダリング操作の設定を定義します。ビデオとオーディオのコーデック、品質設定、出力フォーマットなどが含まれます。
+The `RenderConfig` struct manages rendering settings, including output format, resolution, frame rate, codecs, and various options.
 
 ```rust
 pub struct RenderConfig {
-    /// 出力ファイルを保存するパス
+    /// Output file path
     pub output_path: PathBuf,
-    /// 出力ビデオの幅（ピクセル）
+    /// Video resolution width (in pixels)
     pub width: u32,
-    /// 出力ビデオの高さ（ピクセル）
+    /// Video resolution height (in pixels)
     pub height: u32,
-    /// 出力ビデオのフレームレート
+    /// Video frame rate (frames per second)
     pub frame_rate: f64,
-    /// 使用するビデオコーデック
+    /// Video codec to use
     pub video_codec: VideoCodec,
-    /// ビデオ品質（0-100）
+    /// Video quality (1-100, higher is better)
     pub video_quality: u32,
-    /// 使用するオーディオコーデック
+    /// Audio codec to use
     pub audio_codec: AudioCodec,
-    /// オーディオ品質（0-100）
+    /// Audio quality (1-100, higher is better)
     pub audio_quality: u32,
-    /// 出力コンテナフォーマット
+    /// Output container format
     pub format: OutputFormat,
-    
-    // キャッシュ関連設定
-    /// キャッシュが利用可能な場合に使用するかどうか
-    pub use_cache: bool,
-    /// プロジェクト読み込み時にアセットを自動的に読み込むかどうか
-    pub auto_load_assets: bool,
-    /// 複雑なタイムラインのレンダリングを最適化するかどうか
-    pub optimize_complex_timelines: bool,
-    /// キャッシュディレクトリ（Noneの場合、デフォルトのキャッシュディレクトリを使用）
-    pub cache_dir: Option<PathBuf>,
-    /// キャッシュの最大サイズ（バイト単位、Noneの場合、制限なし）
-    pub max_cache_size: Option<u64>,
-    // その他の設定...
+    // Other settings...
 }
 ```
 
-## 使用例
-
-以下は、キャッシュを活用したレンダリングプロセスの基本的な例です：
+This class implements the builder pattern, allowing settings to be constructed using method chaining:
 
 ```rust
-// RenderPipelineを作成
-let mut pipeline = RenderPipeline::new(project, assets);
-
-// キャッシュを初期化
-let cache_dir = PathBuf::from("/path/to/cache");
-pipeline.init_cache(cache_dir, Some(10 * 1024 * 1024 * 1024)); // 10GB最大
-
-// レンダリング設定を構成
 let config = RenderConfig::new(PathBuf::from("output.mp4"))
     .with_resolution(1920, 1080)
     .with_frame_rate(30.0)
     .with_video_settings(VideoCodec::H264, 80)
     .with_audio_settings(AudioCodec::AAC, 80)
-    .with_format(OutputFormat::MP4)
-    .with_cache(true)
-    .with_auto_load_assets(true)
-    .with_optimize_complex_timelines(true);
+    .with_format(OutputFormat::MP4);
+```
 
-// プロジェクトをレンダリング
-match pipeline.render(&config) {
-    Ok(_) => println!("レンダリング完了！"),
-    Err(e) => eprintln!("レンダリングエラー: {}", e),
+### RenderPipeline
+
+`RenderPipeline` is the central component of the rendering process, managing the entire process of rendering a project's timeline to a video file.
+
+```rust
+pub struct RenderPipeline {
+    /// The project being rendered
+    project: Project,
+    /// Rendering configuration
+    config: RenderConfig,
+    /// Progress tracker for the rendering process
+    progress: SharedProgressTracker,
+    /// Start time of the rendering process
+    start_time: Option<std::time::Instant>,
+    /// Cache for rendered assets
+    cache: Option<Arc<RenderCache>>,
+    /// Whether the pipeline is currently in auto-loading mode
+    auto_loading: bool,
 }
 ```
 
-## ベンチマーク結果
+Key features:
 
-実際のプロジェクトでのパフォーマンス向上：
-- キャッシュ未使用時と比較して、編集開始時間が最大75%短縮
-- 複雑なタイムラインのレンダリング時間が最大40%短縮
-- メモリ使用量の最適化により、大規模プロジェクトでも安定動作
+1. Initializing the rendering pipeline based on project and configuration
+2. Cache initialization and management
+3. Support for asynchronous rendering
+4. Cancellation of rendering processes
+5. Monitoring and reporting progress
 
-以下の表は、異なるハードウェア構成でのパフォーマンスベンチマークを示しています：
+### TrackCompositor
 
-| 構成 | プロジェクトタイプ | キャッシュなし | キャッシュあり | 改善率 |
-|-------------|--------------|--------------|------------|-------------|
-| 4コアCPU    | 1080p、5分 | 8分20秒      | 2分15秒    | 73%         |
-| 8コアCPU    | 4K、10分   | 32分40秒     | 20分12秒   | 38%         |
-| 16コアCPU   | 4K、30分   | 56分18秒     | 35分45秒   | 37%         |
+`TrackCompositor` composes multiple tracks to generate the final video frames, placing clips temporally and applying effects.
 
-メモリ使用量も大幅に改善され、複雑なプロジェクトをレンダリングする際のピークRAM消費量が最大30%削減されました。
+```rust
+pub struct TrackCompositor {
+    // Fields related to track composition
+    // ...
+}
+```
 
-## 今後の改善予定
+Key features:
 
-1. **アダプティブビットレート**：コンテンツの複雑さに基づいてビットレートを動的に調整
-2. **GPUアクセラレーション**：対応するハードウェアでのレンダリング高速化
-3. **プロキシファイル**：編集用の低解像度プロキシファイルのサポート
-4. **分散レンダリング**：複数のマシンでレンダリングタスクを分散するサポート
-5. **キャッシュの同期**：複数デバイス間でのキャッシュ同期メカニズム
+1. Composing tracks of different media types
+2. Temporal alignment of clips
+3. Applying effects
+4. Rendering frames
 
-レンダリングモジュールはプロジェクトの中核となるコンポーネントであり、今後も継続的な改善と最適化が行われる予定です。 
+### RenderCache
+
+`RenderCache` enhances performance by caching rendered assets for reuse.
+
+```rust
+pub struct RenderCache {
+    // Fields related to caching
+    // ...
+}
+```
+
+Key features:
+
+1. Storing and retrieving cache entries
+2. Managing cache size
+3. Invalidating and updating cache
+
+## Usage Examples
+
+### Basic Rendering
+
+```rust
+// Prepare project and configuration
+let project = Project::load("my_project.edv")?;
+let config = RenderConfig::new(PathBuf::from("output.mp4"))
+    .with_resolution(1920, 1080)
+    .with_frame_rate(30.0);
+
+// Use the simple rendering function
+let result = render_project_simple(project, &PathBuf::from("output.mp4"))?;
+println!("Rendering complete: {:?}", result.output_path);
+```
+
+### Detailed Rendering Configuration
+
+```rust
+// Prepare project and detailed configuration
+let project = Project::load("my_project.edv")?;
+let config = RenderConfig::new(PathBuf::from("output.mp4"))
+    .with_resolution(1920, 1080)
+    .with_frame_rate(30.0)
+    .with_video_settings(VideoCodec::H265, 85)
+    .with_audio_settings(AudioCodec::AAC, 80)
+    .with_format(OutputFormat::MP4)
+    .with_cache(true)
+    .with_threads(8);
+
+// Create a rendering pipeline
+let mut pipeline = RenderPipeline::new(project, config);
+
+// Initialize the cache
+pipeline.init_cache(PathBuf::from("./cache"), Some(10 * 1024 * 1024 * 1024))?;
+
+// Set progress callback
+pipeline.set_progress_callback(|progress| {
+    println!("Progress: {}%", progress.percent_complete());
+    false // Don't cancel
+});
+
+// Execute rendering
+let result = pipeline.render()?;
+println!("Rendering complete: {:?}", result.output_path);
+```
+
+### Asynchronous Rendering
+
+```rust
+// Prepare project and configuration
+let project = Project::load("my_project.edv")?;
+let config = RenderConfig::new(PathBuf::from("output.mp4"));
+
+// Create a rendering pipeline
+let pipeline = RenderPipeline::new(project, config);
+
+// Execute rendering asynchronously
+let handle = pipeline.render_async(Some(|result| {
+    match result {
+        Ok(r) => println!("Rendering complete: {:?}", r.output_path),
+        Err(e) => println!("Rendering error: {:?}", e),
+    }
+}));
+
+// Perform other operations...
+
+// Wait for rendering result if needed
+let result = handle.join().unwrap();
+```
+
+## Design Considerations
+
+1. **Performance**: Rendering complex timelines has a high computational cost, so optimizing performance is crucial. Caching and parallel processing implementation help with this.
+
+2. **Error Handling**: Various operations such as FFmpeg operations, file I/O, and composition processing can produce errors. The module implements comprehensive error handling to properly handle these errors.
+
+3. **Extensibility**: The design adopts a highly extensible approach to allow for the future addition of new codecs, formats, and effects.
+
+4. **Resource Management**: The rendering process consumes significant memory and CPU resources, so efficient resource management is essential.
+
+## Implementation Status Update (2024)
+
+Phase 3 of the EDV project, which includes enhancements to the rendering module, officially started on April 1, 2024. The current implementation status is at approximately 15% completion.
+
+Key progress:
+- Core rendering infrastructure is in place with the module structure established
+- Basic support for multiple video and audio tracks has been implemented
+- The foundation for advanced effects and filters has been completed
+- Integration with FFmpeg for output generation is working well
+
+Upcoming tasks:
+- Implementing keyframe support for effects and transitions
+- Adding track locking and visibility controls
+- Enhancing the cache system for better performance
+- Adding compositor features for blending modes and masks
+
+The expected completion date for all rendering module enhancements is May 24, 2024, as part of the overall Phase 3 deliverables.
+
+## Limitations and Future Improvements
+
+1. **GPU Acceleration**: The current version only supports CPU-based rendering. GPU acceleration will be added in future versions.
+
+2. **Hardware Encoding**: Support for hardware encoding is limited. Future releases will improve support for NVENC, QuickSync, and AMD encoders.
+
+3. **Advanced Effects**: The current version only supports basic effects. More advanced effects and transitions will be added in future versions.
+
+4. **Distributed Rendering**: Distribution of rendering jobs across multiple machines is not currently supported but is being considered as a future feature. 
