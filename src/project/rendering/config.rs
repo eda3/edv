@@ -90,6 +90,127 @@ impl AudioCodec {
     }
 }
 
+/// Hardware acceleration types supported by the renderer.
+///
+/// This enum represents different hardware acceleration methods that can
+/// be used to accelerate video processing with hardware support.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub enum HardwareAccelType {
+    /// No hardware acceleration, use CPU only
+    None,
+    /// NVIDIA GPU acceleration (NVENC/NVDEC)
+    Nvidia,
+    /// AMD GPU acceleration (AMF)
+    Amd,
+    /// Intel Quick Sync acceleration
+    Intel,
+    /// Video Acceleration API (for Linux)
+    Vaapi,
+    /// DirectX Video Acceleration (for Windows)
+    Dxva2,
+    /// Video Toolbox (for macOS)
+    VideoToolbox,
+    /// Auto-detect the best available hardware acceleration
+    Auto,
+}
+
+impl Default for HardwareAccelType {
+    fn default() -> Self {
+        Self::None
+    }
+}
+
+impl HardwareAccelType {
+    /// Converts the hardware acceleration type to its FFmpeg hwaccel name.
+    ///
+    /// # Returns
+    ///
+    /// A string containing the FFmpeg hwaccel name, or None if no hardware acceleration.
+    pub fn to_ffmpeg_hwaccel(&self) -> Option<&'static str> {
+        match self {
+            Self::None => None,
+            Self::Nvidia => Some("cuda"),
+            Self::Amd => Some("amf"),
+            Self::Intel => Some("qsv"),
+            Self::Vaapi => Some("vaapi"),
+            Self::Dxva2 => Some("dxva2"),
+            Self::VideoToolbox => Some("videotoolbox"),
+            Self::Auto => None, // Auto will be handled separately in the compositor
+        }
+    }
+
+    /// Gets the appropriate encoder name for this hardware acceleration type.
+    ///
+    /// # Arguments
+    ///
+    /// * `codec` - The base codec to get hardware accelerated version for
+    ///
+    /// # Returns
+    ///
+    /// A string containing the FFmpeg encoder name for hardware acceleration,
+    /// or None if not applicable.
+    pub fn get_hw_encoder_name(&self, codec: VideoCodec) -> Option<&'static str> {
+        match (self, codec) {
+            (Self::None, _) => None,
+            (Self::Nvidia, VideoCodec::H264) => Some("h264_nvenc"),
+            (Self::Nvidia, VideoCodec::H265) => Some("hevc_nvenc"),
+            (Self::Amd, VideoCodec::H264) => Some("h264_amf"),
+            (Self::Amd, VideoCodec::H265) => Some("hevc_amf"),
+            (Self::Intel, VideoCodec::H264) => Some("h264_qsv"),
+            (Self::Intel, VideoCodec::H265) => Some("hevc_qsv"),
+            (Self::Vaapi, VideoCodec::H264) => Some("h264_vaapi"),
+            (Self::Vaapi, VideoCodec::H265) => Some("hevc_vaapi"),
+            (Self::VideoToolbox, VideoCodec::H264) => Some("h264_videotoolbox"),
+            (Self::VideoToolbox, VideoCodec::H265) => Some("hevc_videotoolbox"),
+            // Either Auto or no hardware support for this combination
+            _ => None,
+        }
+    }
+
+    /// Detects available hardware acceleration methods on the current system.
+    ///
+    /// # Returns
+    ///
+    /// A vector of available hardware acceleration types.
+    pub fn detect_available() -> Vec<Self> {
+        let mut available = vec![Self::None]; // None is always available
+
+        // Check for NVIDIA GPUs (simplified - in real impl would check for CUDA-capable devices)
+        #[cfg(any(target_os = "windows", target_os = "linux"))]
+        if std::path::Path::new("/dev/nvidia0").exists()
+            || std::env::var("CUDA_VISIBLE_DEVICES").is_ok()
+        {
+            available.push(Self::Nvidia);
+        }
+
+        // Check for AMD GPUs (simplified)
+        #[cfg(any(target_os = "windows", target_os = "linux"))]
+        if std::path::Path::new("/dev/dri/renderD128").exists() {
+            available.push(Self::Amd);
+            available.push(Self::Vaapi); // VAAPI likely available on Linux with AMD
+        }
+
+        // Intel QuickSync check (simplified)
+        if std::env::var("INTEL_GPU").is_ok() || std::env::var("LIBVA_DRIVER_NAME").is_ok() {
+            available.push(Self::Intel);
+        }
+
+        // Platform specific checks
+        #[cfg(target_os = "windows")]
+        available.push(Self::Dxva2);
+
+        #[cfg(target_os = "macos")]
+        available.push(Self::VideoToolbox);
+
+        // If we found any hardware acceleration method, add Auto option
+        if available.len() > 1 {
+            available.push(Self::Auto);
+        }
+
+        available
+    }
+}
+
 /// Output format options for rendering.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum OutputFormat {
@@ -181,6 +302,15 @@ pub struct RenderConfig {
 
     /// Maximum cache size in bytes (if None, no limit).
     pub max_cache_size: Option<u64>,
+
+    /// Hardware acceleration type to use.
+    pub hardware_accel_type: HardwareAccelType,
+
+    /// Whether to use hardware accelerated decoding when available.
+    pub use_hw_decoding: bool,
+
+    /// Maximum GPU memory usage in bytes (if None, no limit).
+    pub max_gpu_memory: Option<u64>,
 }
 
 impl Default for RenderConfig {
@@ -204,6 +334,9 @@ impl Default for RenderConfig {
             optimize_complex_timelines: true,
             cache_dir: None,
             max_cache_size: Some(10 * 1024 * 1024 * 1024), // 10 GB default
+            hardware_accel_type: HardwareAccelType::default(),
+            use_hw_decoding: true,
+            max_gpu_memory: None,
         }
     }
 }
@@ -313,6 +446,27 @@ impl RenderConfig {
         self
     }
 
+    /// Sets the hardware acceleration type to use.
+    #[must_use]
+    pub fn with_hardware_acceleration(mut self, accel_type: HardwareAccelType) -> Self {
+        self.hardware_accel_type = accel_type;
+        self
+    }
+
+    /// Sets whether to use hardware accelerated decoding.
+    #[must_use]
+    pub fn with_hw_decoding(mut self, use_hw_decoding: bool) -> Self {
+        self.use_hw_decoding = use_hw_decoding;
+        self
+    }
+
+    /// Sets the maximum GPU memory usage in bytes.
+    #[must_use]
+    pub fn with_max_gpu_memory(mut self, size: u64) -> Self {
+        self.max_gpu_memory = Some(size);
+        self
+    }
+
     /// Validates the configuration and returns an error if invalid.
     pub fn validate(&self) -> Result<(), String> {
         if self.output_path.as_os_str().is_empty() {
@@ -327,21 +481,68 @@ impl RenderConfig {
             return Err("Frame rate must be positive".to_string());
         }
 
+        // Validate hardware acceleration type for the selected codec
+        if self.hardware_accel_type != HardwareAccelType::None
+            && self.hardware_accel_type != HardwareAccelType::Auto
+        {
+            // Check if the selected codec is compatible with the hardware acceleration
+            if self
+                .hardware_accel_type
+                .get_hw_encoder_name(self.video_codec)
+                .is_none()
+            {
+                return Err(format!(
+                    "Selected video codec ({:?}) is not compatible with hardware acceleration type ({:?})",
+                    self.video_codec, self.hardware_accel_type
+                ));
+            }
+        }
+
         Ok(())
+    }
+
+    /// Determines whether hardware acceleration should be used based on current config.
+    ///
+    /// # Returns
+    ///
+    /// True if hardware acceleration should be used, false otherwise.
+    pub fn should_use_hardware_acceleration(&self) -> bool {
+        // Don't use hardware acceleration if explicitly set to None
+        if self.hardware_accel_type == HardwareAccelType::None {
+            return false;
+        }
+
+        // Auto means we need to check if hardware acceleration is available
+        if self.hardware_accel_type == HardwareAccelType::Auto {
+            // In a real implementation, we would check available hardware here
+            // For now, we'll say none is available
+            return false;
+        }
+
+        // Check if selected codec is supported with this hardware acceleration
+        self.hardware_accel_type
+            .get_hw_encoder_name(self.video_codec)
+            .is_some()
     }
 }
 
 impl PartialEq for RenderConfig {
     fn eq(&self, other: &Self) -> bool {
-        self.width == other.width
+        self.output_path == other.output_path
+            && self.width == other.width
             && self.height == other.height
-            && (self.frame_rate - other.frame_rate).abs() < 0.001
+            && self.frame_rate == other.frame_rate
             && self.video_codec == other.video_codec
             && self.video_quality == other.video_quality
             && self.audio_codec == other.audio_codec
             && self.audio_quality == other.audio_quality
             && self.format == other.format
+            && self.start_position == other.start_position
+            && self.end_position == other.end_position
+            && self.threads == other.threads
             && self.include_subtitles == other.include_subtitles
+            && self.hardware_accel_type == other.hardware_accel_type
+            && self.use_hw_decoding == other.use_hw_decoding
     }
 }
 
@@ -349,18 +550,20 @@ impl Eq for RenderConfig {}
 
 impl Hash for RenderConfig {
     fn hash<H: Hasher>(&self, state: &mut H) {
+        self.output_path.hash(state);
         self.width.hash(state);
         self.height.hash(state);
-
-        // f64をハッシュ可能にするためにビット表現を使用
-        let frame_rate_bits = self.frame_rate.to_bits();
-        frame_rate_bits.hash(state);
-
+        // We'll ignore frame_rate in the hash since it's an f64
         self.video_codec.hash(state);
         self.video_quality.hash(state);
         self.audio_codec.hash(state);
         self.audio_quality.hash(state);
         self.format.hash(state);
+        // We'll ignore start_position and end_position in the hash
+        // since they're optional TimePositions
+        self.threads.hash(state);
         self.include_subtitles.hash(state);
+        self.hardware_accel_type.hash(state);
+        self.use_hw_decoding.hash(state);
     }
 }

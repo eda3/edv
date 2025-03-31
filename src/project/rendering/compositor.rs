@@ -430,39 +430,139 @@ impl TrackCompositor {
             .collect();
 
         // 処理能力に基づいて並列処理を最適化（複雑なタイムラインの場合）
-        if self.optimize_complex && tracks_to_process.len() > 4 {
+        let is_complex_timeline = self.optimize_complex && tracks_to_process.len() > 4;
+
+        if is_complex_timeline {
             // 利用可能なCPUコア数に基づいてスレッド数を決定
             let num_cpus = num_cpus::get();
-            let thread_count = (num_cpus / 2).max(1);
+            let thread_count = (num_cpus / 2).max(2).min(tracks_to_process.len());
 
-            // ログメッセージ（実際の実装ではロガーを使用）
             println!(
-                "Optimizing for complex timeline with {} tracks using {} threads",
+                "🚀 パフォーマンス最適化: {}トラックを{}スレッドで並列処理します",
                 tracks_to_process.len(),
                 thread_count
             );
 
-            // 動的なFFmpegコマンドパラメータを調整
-            // 実際の実装ではこの部分にFFmpegの最適化パラメータを設定
-        }
+            use rayon::prelude::*;
+            use std::sync::Mutex;
 
-        // 各トラックを適切なメソッドで処理
-        for (track_id, kind, clips) in tracks_to_process {
-            let prepared_track = match kind {
-                TrackKind::Video => self.prepare_video_track_from_data(track_id, &clips, config)?,
-                TrackKind::Audio => self.prepare_audio_track_from_data(track_id, &clips, config)?,
-                TrackKind::Subtitle => {
-                    self.prepare_subtitle_track_from_data(track_id, &clips, config)?
+            // 結果を保存するためのスレッドセーフなコンテナ
+            let prepared_results = Mutex::new(Vec::with_capacity(tracks_to_process.len()));
+            let temp_files = Mutex::new(Vec::new());
+
+            // スレッドプールを構成して並列処理を実行
+            rayon::ThreadPoolBuilder::new()
+                .num_threads(thread_count)
+                .build()
+                .unwrap()
+                .install(|| {
+                    tracks_to_process
+                        .par_iter()
+                        .for_each(|(track_id, kind, clips)| {
+                            // キャンセルされた場合はスキップ
+                            if self.is_cancelled() {
+                                return;
+                            }
+
+                            let result = match kind {
+                                TrackKind::Video => {
+                                    match self
+                                        .prepare_video_track_parallel(*track_id, clips, config)
+                                    {
+                                        Ok((prepared_track, file)) => {
+                                            // 中間ファイルを安全に保存
+                                            if let Some(f) = file {
+                                                let mut files = temp_files.lock().unwrap();
+                                                files.push(f);
+                                            }
+                                            Ok((*track_id, prepared_track))
+                                        }
+                                        Err(e) => Err(e),
+                                    }
+                                }
+                                TrackKind::Audio => {
+                                    match self
+                                        .prepare_audio_track_parallel(*track_id, clips, config)
+                                    {
+                                        Ok((prepared_track, file)) => {
+                                            // 中間ファイルを安全に保存
+                                            if let Some(f) = file {
+                                                let mut files = temp_files.lock().unwrap();
+                                                files.push(f);
+                                            }
+                                            Ok((*track_id, prepared_track))
+                                        }
+                                        Err(e) => Err(e),
+                                    }
+                                }
+                                TrackKind::Subtitle => {
+                                    match self
+                                        .prepare_subtitle_track_parallel(*track_id, clips, config)
+                                    {
+                                        Ok(prepared_track) => Ok((*track_id, prepared_track)),
+                                        Err(e) => Err(e),
+                                    }
+                                }
+                            };
+
+                            // 結果を安全に保存
+                            let mut results = prepared_results.lock().unwrap();
+                            match result {
+                                Ok((id, track)) => results.push(Ok((id, track))),
+                                Err(e) => results.push(Err(e)),
+                            }
+                        });
+                });
+
+            // 中間ファイルを保存
+            let files = temp_files.into_inner().unwrap();
+            for file in files {
+                self.intermediate_files.push(file);
+            }
+
+            // 結果を処理
+            let results = prepared_results.into_inner().unwrap();
+            for result in results {
+                match result {
+                    Ok((id, track)) => {
+                        prepared_tracks.insert(id, track);
+                    }
+                    Err(e) => return Err(e),
                 }
-            };
+            }
 
-            prepared_tracks.insert(track_id, prepared_track);
+            // 各トラックにファイルを関連付け
+            // tracks_to_processの順番で処理されたことを利用
+            for track_id in tracks_to_process.iter().map(|(id, _, _)| id) {
+                if let Some(track) = prepared_tracks.get_mut(track_id) {
+                    if !self.intermediate_files.is_empty() {
+                        track.file = Some(self.intermediate_files.remove(0));
+                    }
+                }
+            }
+        } else {
+            // 通常の逐次処理（複雑でないタイムラインの場合）
+            for (track_id, kind, clips) in tracks_to_process {
+                let prepared_track = match kind {
+                    TrackKind::Video => {
+                        self.prepare_video_track_from_data(track_id, &clips, config)?
+                    }
+                    TrackKind::Audio => {
+                        self.prepare_audio_track_from_data(track_id, &clips, config)?
+                    }
+                    TrackKind::Subtitle => {
+                        self.prepare_subtitle_track_from_data(track_id, &clips, config)?
+                    }
+                };
 
-            // キャンセルされたかチェック
-            if self.is_cancelled() {
-                return Err(CompositionError::IncompatibleTracks(
-                    "Composition cancelled".to_string(),
-                ));
+                prepared_tracks.insert(track_id, prepared_track);
+
+                // キャンセルされたかチェック
+                if self.is_cancelled() {
+                    return Err(CompositionError::IncompatibleTracks(
+                        "Composition cancelled".to_string(),
+                    ));
+                }
             }
         }
 
@@ -484,7 +584,7 @@ impl TrackCompositor {
         &mut self,
         track_id: TrackId,
         clips: &[Clip],
-        config: &RenderConfig,
+        _config: &RenderConfig,
     ) -> Result<PreparedTrack> {
         // Create a temporary file for the rendered track
         let intermediate_file = IntermediateFile::new("mp4")?;
@@ -523,7 +623,7 @@ impl TrackCompositor {
         &mut self,
         track_id: TrackId,
         clips: &[Clip],
-        config: &RenderConfig,
+        _config: &RenderConfig,
     ) -> Result<PreparedTrack> {
         // Create a temporary file for the rendered track
         let intermediate_file = IntermediateFile::new("aac")?;
@@ -666,24 +766,23 @@ impl TrackCompositor {
         let mut ordered_tracks: Vec<&PreparedTrack> = Vec::new();
 
         // Get sort order from track relationship manager
-        let multi_track_manager = self.timeline.multi_track_manager();
+        let _multi_track_manager = self.timeline.multi_track_manager();
 
         // First filter only visible tracks
-        let visible_tracks: Vec<&PreparedTrack> = video_tracks
+        let filtered_tracks = video_tracks
             .iter()
-            .filter(|track| {
-                // Check if track is visible (get from actual data)
-                // Default to visible
+            .filter(|_track| {
+                // In a real implementation, we'd check if the track is visible
                 true
             })
             .copied()
-            .collect();
+            .collect::<Vec<_>>();
 
         // Sort tracks based on relationships
         // Process from lower layer to upper layer (z-index from low to high)
-        if !visible_tracks.is_empty() {
+        if !filtered_tracks.is_empty() {
             // Track unprocessed tracks
-            let mut remaining_tracks: Vec<&PreparedTrack> = visible_tracks.clone();
+            let mut remaining_tracks: Vec<&PreparedTrack> = filtered_tracks.clone();
 
             // Order based on track relationships (for simple cases)
             // In implementation, use track relationship manager for proper ordering
@@ -918,7 +1017,7 @@ impl TrackCompositor {
     fn generate_audio_filtergraph(
         &self,
         audio_tracks: &[&PreparedTrack],
-        config: &RenderConfig,
+        _config: &RenderConfig,
     ) -> String {
         if audio_tracks.is_empty() {
             return String::new();
@@ -929,7 +1028,7 @@ impl TrackCompositor {
         let mut amix_inputs = Vec::new();
 
         // Consider multi-track relationships and priority
-        let multi_track_manager = self.timeline.multi_track_manager();
+        let _multi_track_manager = self.timeline.multi_track_manager();
 
         // Process each track (order is not important - all mixed)
         for (i, track) in audio_tracks.iter().enumerate() {
@@ -1259,6 +1358,126 @@ impl TrackCompositor {
         self.update_progress(RenderStage::Complete);
 
         Ok(())
+    }
+
+    /// 並列処理用のビデオトラック準備メソッド
+    ///
+    /// # Arguments
+    ///
+    /// * `track_id` - トラックID
+    /// * `clips` - トラック内のクリップ
+    /// * `config` - レンダリング設定
+    ///
+    /// # Returns
+    ///
+    /// 準備されたトラックと中間ファイルのタプル、またはエラー
+    fn prepare_video_track_parallel(
+        &self,
+        track_id: TrackId,
+        clips: &[Clip],
+        _config: &RenderConfig,
+    ) -> Result<(PreparedTrack, Option<IntermediateFile>)> {
+        // 中間ファイルを作成
+        let intermediate_file = IntermediateFile::new("mp4")?;
+
+        // ここで実際のビデオ処理ロジックを実装...
+
+        // 最長のクリップ位置+長さを計算 = トラック長さ
+        let duration = clips
+            .iter()
+            .map(|clip| clip.position() + clip.duration())
+            .max_by(|a, b| a.partial_cmp(b).unwrap_or(std::cmp::Ordering::Equal))
+            .unwrap_or_else(|| TimePosition::from_seconds(0.0))
+            .to_duration();
+
+        let prepared_track = PreparedTrack {
+            id: track_id,
+            kind: TrackKind::Video,
+            file: None, // IntermediateFileを直接渡せないので、別で返す
+            clips: clips.to_vec(),
+            duration,
+        };
+
+        Ok((prepared_track, Some(intermediate_file)))
+    }
+
+    /// 並列処理用のオーディオトラック準備メソッド
+    ///
+    /// # Arguments
+    ///
+    /// * `track_id` - トラックID
+    /// * `clips` - トラック内のクリップ
+    /// * `config` - レンダリング設定
+    ///
+    /// # Returns
+    ///
+    /// 準備されたトラックと中間ファイルのタプル、またはエラー
+    fn prepare_audio_track_parallel(
+        &self,
+        track_id: TrackId,
+        clips: &[Clip],
+        _config: &RenderConfig,
+    ) -> Result<(PreparedTrack, Option<IntermediateFile>)> {
+        // 中間ファイルを作成
+        let intermediate_file = IntermediateFile::new("aac")?;
+
+        // ここで実際のオーディオ処理ロジックを実装...
+
+        // 最長のクリップ位置+長さを計算 = トラック長さ
+        let duration = clips
+            .iter()
+            .map(|clip| clip.position() + clip.duration())
+            .max_by(|a, b| a.partial_cmp(b).unwrap_or(std::cmp::Ordering::Equal))
+            .unwrap_or_else(|| TimePosition::from_seconds(0.0))
+            .to_duration();
+
+        let prepared_track = PreparedTrack {
+            id: track_id,
+            kind: TrackKind::Audio,
+            file: None, // IntermediateFileを直接渡せないので、別で返す
+            clips: clips.to_vec(),
+            duration,
+        };
+
+        Ok((prepared_track, Some(intermediate_file)))
+    }
+
+    /// 並列処理用の字幕トラック準備メソッド
+    ///
+    /// # Arguments
+    ///
+    /// * `track_id` - トラックID
+    /// * `clips` - トラック内のクリップ
+    /// * `config` - レンダリング設定
+    ///
+    /// # Returns
+    ///
+    /// 準備されたトラック、またはエラー
+    fn prepare_subtitle_track_parallel(
+        &self,
+        track_id: TrackId,
+        clips: &[Clip],
+        _config: &RenderConfig,
+    ) -> Result<PreparedTrack> {
+        // 字幕トラックは中間ファイルを使用しない
+
+        // 最長のクリップ位置+長さを計算 = トラック長さ
+        let duration = clips
+            .iter()
+            .map(|clip| clip.position() + clip.duration())
+            .max_by(|a, b| a.partial_cmp(b).unwrap_or(std::cmp::Ordering::Equal))
+            .unwrap_or_else(|| TimePosition::from_seconds(0.0))
+            .to_duration();
+
+        let prepared_track = PreparedTrack {
+            id: track_id,
+            kind: TrackKind::Subtitle,
+            file: None, // 中間ファイルなし
+            clips: clips.to_vec(),
+            duration,
+        };
+
+        Ok(prepared_track)
     }
 }
 
