@@ -2,6 +2,15 @@
 
 このドキュメントでは、edvアプリケーションのFFmpeg統合モジュールの詳細な実装ガイドラインを提供します。
 
+**最終更新日: 2025年4月1日**
+
+## 最近の更新
+
+- FFmpegCommandクラスのメモリ使用効率を最適化（ベクトルの初期容量設定）
+- 不要なクローンと文字列変換を削除
+- executeメソッドのパフォーマンス向上とエラーハンドリングの改善
+- バッファリング処理の効率化
+
 ## 概要
 
 FFmpegモジュールは、外部のFFmpegライブラリとの統合を担当し、ビデオ編集の核となる機能を提供します。このモジュールはFFmpegの検出、バージョン検証、コマンド構築、実行、結果の解析などの機能を抽象化し、edvアプリケーションの他のコンポーネントに対して一貫したインターフェースを提供します。
@@ -151,10 +160,11 @@ pub struct FFmpegCommand<'a> {
 }
 
 impl<'a> FFmpegCommand<'a> {
-    /// Creates a new `FFmpeg` command.
+    /// Creates a new `FFmpeg` command with optimized initial vector capacities.
     pub fn new(ffmpeg: &'a FFmpeg) -> Self;
     
     /// Adds input options to be applied before an input file.
+    /// Reserves capacity based on estimated size to reduce reallocations.
     pub fn input_options<S: AsRef<str>, I: IntoIterator<Item = S>>(
         &mut self,
         options: I,
@@ -178,10 +188,12 @@ impl<'a> FFmpegCommand<'a> {
     /// Sets whether to overwrite the output file if it exists.
     pub fn overwrite(&mut self, overwrite: bool) -> &mut Self;
     
-    /// Executes the `FFmpeg` command.
+    /// Executes the `FFmpeg` command with optimized validation and error handling.
+    /// Includes improved buffering for standard output and error streams.
     pub fn execute(&self) -> Result<()>;
     
     /// Executes the `FFmpeg` command with progress reporting.
+    /// Optimized for efficient process management and error detection.
     pub fn execute_with_progress<F>(&self, progress_callback: F) -> Result<()>
     where
         F: FnMut(&str);
@@ -210,11 +222,23 @@ pub enum Error {
     
     /// IO error.
     #[error("IO error: {0}")]
-    IoError(#[from] io::Error),
+    IoError(String),
     
     /// Error parsing `FFmpeg` output.
     #[error("Error parsing FFmpeg output: {0}")]
     ParseError(String),
+
+    /// Missing output file specification.
+    #[error("No output file specified")]
+    MissingOutput,
+
+    /// Missing input file specification.
+    #[error("No input files specified")]
+    MissingInput,
+
+    /// Process execution error.
+    #[error("Process error: {0}")]
+    ProcessError(String),
 }
 
 /// Result type for `FFmpeg` operations.
@@ -304,11 +328,13 @@ fn trim_video(
 
 2. **バージョン検証**: サポート対象の最小バージョン（4.0.0）を定義し、検出されたFFmpegが互換性があるかどうかを確認します。
 
-3. **効率的なコマンド構築**: ビルダーパターンを使用してFFmpegコマンドを構築することで、メソッドチェーンを通じた流暢なAPIを提供します。
+3. **効率的なコマンド構築**: ビルダーパターンを使用してFFmpegコマンドを構築することで、メソッドチェーンを通じた流暢なAPIを提供します。ベクトルの初期容量設定により、メモリの再割り当てを最小限に抑えます。
 
 4. **進捗報告**: 長時間実行されるFFmpeg操作中の進捗状況をリアルタイムで報告する機能を提供します。
 
-5. **エラー処理**: FFmpeg固有のエラー（実行可能ファイルが見つからない、タイムアウト、FFmpegエラー出力など）を適切に処理します。
+5. **堅牢なエラー処理**: FFmpeg固有のエラー（実行可能ファイルが見つからない、タイムアウト、FFmpegエラー出力など）を適切に処理し、詳細なエラーメッセージを提供します。
+
+6. **最適化されたプロセス管理**: 標準出力と標準エラー出力の効率的なバッファリングにより、プロセス実行のオーバーヘッドを削減します。
 
 ## 制限事項と将来の拡張可能性
 
@@ -318,4 +344,6 @@ fn trim_video(
 
 3. **並列処理**: 現在、一度に一つのFFmpegプロセスしか管理できません。将来的には、複数のFFmpeg操作を並列して実行する機能を追加する価値があるでしょう。
 
-4. **ハードウェアアクセラレーション**: ハードウェアアクセラレーションオプションの検出と使用のためのユーティリティを追加することで、パフォーマンスを向上させることができます。 
+4. **ハードウェアアクセラレーション**: ハードウェアアクセラレーションオプションの検出と使用のためのユーティリティを追加することで、パフォーマンスを向上させることができます。
+
+5. **コマンドのキャッシュと再利用**: 類似コマンドのキャッシュと再利用メカニズムを実装し、同じ設定での繰り返し実行時の効率を向上させることができます。 
