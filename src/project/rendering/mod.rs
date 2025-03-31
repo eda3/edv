@@ -6,7 +6,7 @@
 
 mod cache;
 mod compositor;
-mod config;
+pub mod config;
 /// Timeline rendering functionality.
 ///
 /// This module provides functionality for rendering timeline projects to

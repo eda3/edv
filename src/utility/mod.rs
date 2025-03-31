@@ -1,3 +1,4 @@
+pub mod gpu_test;
 /// Utility functions and types.
 ///
 /// This module provides various utility functions and types used throughout
