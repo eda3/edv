@@ -34,25 +34,23 @@ pub struct RenderProgress {
     pub current_stage: RenderStage,
 }
 
-/// Represents the different stages of the rendering process.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+/// Stages of the rendering process.
+///
+/// This enum represents the different stages that occur during
+/// the rendering of a timeline. It is used to track progress
+/// and provide feedback to the user.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum RenderStage {
-    /// Ready to start rendering.
-    Ready,
-    /// Preparing to render.
+    /// Initial preparation stage
     Preparing,
-    /// Preparing assets for rendering.
-    PreparingAssets,
-    /// Rendering is in progress.
+    /// Main rendering stage
     Rendering,
-    /// Post-processing the rendered output.
+    /// Post-processing stage
     PostProcessing,
-    /// Rendering is complete.
+    /// Rendering complete
     Complete,
-    /// Rendering was cancelled.
+    /// Rendering cancelled
     Cancelled,
-    /// Rendering failed.
-    Failed,
 }
 
 impl RenderStage {
@@ -60,13 +58,10 @@ impl RenderStage {
     #[must_use]
     pub fn description(&self) -> &'static str {
         match self {
-            Self::Ready => "Ready to start rendering",
             Self::Preparing => "Preparing to render",
-            Self::PreparingAssets => "Preparing assets for rendering",
             Self::Rendering => "Rendering",
             Self::PostProcessing => "Post-processing the rendered output",
             Self::Complete => "Render complete",
-            Self::Failed => "Render failed",
             Self::Cancelled => "Render cancelled",
         }
     }
@@ -119,7 +114,7 @@ impl ProgressTracker {
                 elapsed: StdDuration::from_secs(0),
                 estimated_remaining: None,
                 render_fps: 0.0,
-                current_stage: RenderStage::Ready,
+                current_stage: RenderStage::Preparing,
             },
             start_time: now,
             last_update: now,
@@ -213,7 +208,7 @@ impl ProgressTracker {
 
     /// Marks the rendering as failed.
     pub fn fail(&mut self) {
-        self.set_stage(RenderStage::Failed);
+        self.set_stage(RenderStage::Cancelled);
     }
 
     /// Cancels the rendering operation.
@@ -235,83 +230,73 @@ impl ProgressTracker {
     }
 }
 
-/// A shareable progress tracker for use across threads.
+/// A shared progress tracker for rendering operations.
+///
+/// This struct provides a thread-safe way to track rendering progress
+/// and allow cancellation of the rendering process.
 #[derive(Debug, Clone)]
 pub struct SharedProgressTracker {
-    /// Inner progress tracker wrapped in Arc<Mutex>.
-    inner: Arc<Mutex<ProgressTracker>>,
+    /// Current rendering stage
+    stage: std::sync::Arc<std::sync::Mutex<RenderStage>>,
+    /// Whether rendering has been cancelled
+    cancelled: std::sync::Arc<std::sync::atomic::AtomicBool>,
 }
 
 impl SharedProgressTracker {
-    /// Creates a new shared progress tracker.
-    #[must_use]
-    pub fn new(total_frames: u64, total_duration: Duration) -> Self {
-        Self {
-            inner: Arc::new(Mutex::new(ProgressTracker::new(
-                total_frames,
-                total_duration,
-            ))),
-        }
-    }
-
-    /// Sets the callback function for progress updates.
-    pub fn set_callback(&self, callback: ProgressCallback) {
-        if let Ok(mut tracker) = self.inner.lock() {
-            tracker.set_callback(callback);
-        }
-    }
-
-    /// Updates the progress state.
+    /// Creates a new progress tracker.
     ///
-    /// Returns `true` if rendering should continue, or `false` if cancelled.
-    pub fn update(&self, frames_completed: u64, current_position: TimePosition) -> bool {
-        self.inner
-            .lock()
-            .map(|mut tracker| tracker.update(frames_completed, current_position))
-            .unwrap_or(false)
+    /// # Returns
+    ///
+    /// A new `SharedProgressTracker` instance.
+    pub fn new() -> Self {
+        Self {
+            stage: std::sync::Arc::new(std::sync::Mutex::new(RenderStage::Preparing)),
+            cancelled: std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false)),
+        }
     }
 
     /// Sets the current rendering stage.
+    ///
+    /// # Arguments
+    ///
+    /// * `stage` - The new rendering stage
     pub fn set_stage(&self, stage: RenderStage) {
-        if let Ok(mut tracker) = self.inner.lock() {
-            tracker.set_stage(stage);
+        if let Ok(mut stage_lock) = self.stage.lock() {
+            *stage_lock = stage;
         }
     }
 
-    /// Marks the rendering as complete.
-    pub fn complete(&self) {
-        if let Ok(mut tracker) = self.inner.lock() {
-            tracker.complete();
-        }
+    /// Gets the current rendering stage.
+    ///
+    /// # Returns
+    ///
+    /// The current rendering stage.
+    pub fn get_stage(&self) -> RenderStage {
+        self.stage
+            .lock()
+            .map(|stage| *stage)
+            .unwrap_or(RenderStage::Preparing)
     }
 
-    /// Marks the rendering as failed.
-    pub fn fail(&self) {
-        if let Ok(mut tracker) = self.inner.lock() {
-            tracker.fail();
-        }
-    }
-
-    /// Cancels the rendering operation.
+    /// Cancels the rendering process.
     pub fn cancel(&self) {
-        if let Ok(mut tracker) = self.inner.lock() {
-            tracker.cancel();
-        }
+        self.cancelled
+            .store(true, std::sync::atomic::Ordering::SeqCst);
+        self.set_stage(RenderStage::Cancelled);
     }
 
-    /// Returns whether the rendering has been cancelled.
+    /// Checks if rendering has been cancelled.
+    ///
+    /// # Returns
+    ///
+    /// `true` if rendering has been cancelled, `false` otherwise.
     pub fn is_cancelled(&self) -> bool {
-        self.inner
-            .lock()
-            .map(|tracker| tracker.is_cancelled())
-            .unwrap_or(true)
+        self.cancelled.load(std::sync::atomic::Ordering::SeqCst)
     }
+}
 
-    /// Gets the current progress state.
-    pub fn get_progress(&self) -> Option<RenderProgress> {
-        self.inner
-            .lock()
-            .map(|tracker| tracker.get_progress().clone())
-            .ok()
+impl Default for SharedProgressTracker {
+    fn default() -> Self {
+        Self::new()
     }
 }

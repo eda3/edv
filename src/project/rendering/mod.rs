@@ -1,3 +1,9 @@
+//! Rendering module for video composition and processing.
+//!
+//! This module provides functionality for rendering video timelines,
+//! including composition of multiple tracks, applying effects,
+//! and handling audio/video synchronization.
+
 mod cache;
 mod compositor;
 mod config;

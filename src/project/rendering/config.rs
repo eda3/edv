@@ -6,19 +6,23 @@ use crate::utility::time::TimePosition;
 use std::hash::{Hash, Hasher};
 use std::path::PathBuf;
 
-/// Video codec options for rendering.
+/// Video codec types supported by the renderer.
+///
+/// This enum represents the different video codecs that can be used
+/// for rendering video tracks. Each variant corresponds to a specific
+/// codec implementation in FFmpeg.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum VideoCodec {
-    /// H.264 codec (default).
-    H264,
-    /// H.265/HEVC codec.
-    H265,
-    /// VP9 codec.
-    VP9,
-    /// ProRes codec.
-    ProRes,
-    /// Use stream copying when possible (no re-encoding).
+    /// Copy video stream without re-encoding
     Copy,
+    /// H.264/AVC codec
+    H264,
+    /// H.265/HEVC codec
+    H265,
+    /// VP9 codec
+    VP9,
+    /// AV1 codec
+    AV1,
 }
 
 impl Default for VideoCodec {
@@ -28,32 +32,39 @@ impl Default for VideoCodec {
 }
 
 impl VideoCodec {
-    /// Gets the FFmpeg codec name for this codec.
-    #[must_use]
+    /// Converts the codec to its FFmpeg codec name.
+    ///
+    /// # Returns
+    ///
+    /// A string containing the FFmpeg codec name.
     pub fn to_ffmpeg_codec(&self) -> &'static str {
         match self {
+            Self::Copy => "copy",
             Self::H264 => "libx264",
             Self::H265 => "libx265",
             Self::VP9 => "libvpx-vp9",
-            Self::ProRes => "prores",
-            Self::Copy => "copy",
+            Self::AV1 => "libaom-av1",
         }
     }
 }
 
-/// Audio codec options for rendering.
+/// Audio codec types supported by the renderer.
+///
+/// This enum represents the different audio codecs that can be used
+/// for rendering audio tracks. Each variant corresponds to a specific
+/// codec implementation in FFmpeg.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum AudioCodec {
-    /// AAC codec (default).
-    AAC,
-    /// MP3 codec.
-    MP3,
-    /// Opus codec.
-    Opus,
-    /// FLAC codec.
-    FLAC,
-    /// Use stream copying when possible (no re-encoding).
+    /// Copy audio stream without re-encoding
     Copy,
+    /// AAC codec
+    AAC,
+    /// Opus codec
+    Opus,
+    /// MP3 codec
+    MP3,
+    /// Vorbis codec
+    Vorbis,
 }
 
 impl Default for AudioCodec {
@@ -63,15 +74,18 @@ impl Default for AudioCodec {
 }
 
 impl AudioCodec {
-    /// Gets the FFmpeg codec name for this codec.
-    #[must_use]
+    /// Converts the codec to its FFmpeg codec name.
+    ///
+    /// # Returns
+    ///
+    /// A string containing the FFmpeg codec name.
     pub fn to_ffmpeg_codec(&self) -> &'static str {
         match self {
-            Self::AAC => "aac",
-            Self::MP3 => "libmp3lame",
-            Self::Opus => "libopus",
-            Self::FLAC => "flac",
             Self::Copy => "copy",
+            Self::AAC => "aac",
+            Self::Opus => "libopus",
+            Self::MP3 => "libmp3lame",
+            Self::Vorbis => "libvorbis",
         }
     }
 }

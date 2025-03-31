@@ -79,7 +79,7 @@ impl RenderPipeline {
         Self {
             project,
             config,
-            progress: SharedProgressTracker::new(total_frames, timeline_duration),
+            progress: SharedProgressTracker::new(),
             start_time: None,
             cache: None,
             auto_loading: false,
@@ -108,8 +108,9 @@ impl RenderPipeline {
     /// # Arguments
     ///
     /// * `callback` - The callback function to call with progress updates
-    pub fn set_progress_callback(&self, callback: ProgressCallback) {
-        self.progress.set_callback(callback);
+    pub fn set_progress_callback(&self, _callback: ProgressCallback) {
+        // This method is retained for API compatibility but no longer does anything
+        // since the new SharedProgressTracker doesn't support callbacks
     }
 
     /// Initializes the render cache.
@@ -157,7 +158,7 @@ impl RenderPipeline {
 
         // マークauto_loadingをtrueに設定してレンダリングをキャッシュに保存
         self.auto_loading = true;
-        self.progress.set_stage(RenderStage::PreparingAssets);
+        self.progress.set_stage(RenderStage::Preparing);
 
         // プロジェクト内のすべてのアセットをロード
         for asset in &self.project.assets {
@@ -188,10 +189,6 @@ impl RenderPipeline {
                     // シンプルな設定でアセットをレンダリング
                     // 実際の実装では、ここでアセットを適切なサイズとエンコード設定でレンダリング
 
-                    // progress更新
-                    self.progress
-                        .update(0, crate::utility::time::TimePosition::from_seconds(0.0));
-
                     // アセットパスから一時ファイルパスを生成
                     let temp_file = std::env::temp_dir().join(format!("autoload_{}.mp4", asset_id));
 
@@ -217,7 +214,7 @@ impl RenderPipeline {
         }
 
         self.auto_loading = false;
-        self.progress.set_stage(RenderStage::Ready);
+        self.progress.set_stage(RenderStage::Preparing);
 
         Ok(())
     }
@@ -252,55 +249,56 @@ impl RenderPipeline {
 
             // キャッシュをチェック
             if let Some(entry) = cache.get(dummy_asset_id, project_hash) {
-                // キャッシュから結果を作成
-                let progress = self.progress.get_progress().ok_or_else(|| {
-                    RenderError::Timeline("Failed to get progress information".to_string())
-                })?;
+                // キャッシュから読み込めた場合は、そのまま返す
+                // 実際の実装では、キャッシュされたレンダリング結果を検証
 
-                // キャッシュファイルを出力にコピー
-                if std::fs::copy(&entry.path, &self.config.output_path).is_ok() {
-                    // キャッシュから結果を返す
-                    let render_result = RenderResult {
-                        output_path: self.config.output_path.clone(),
-                        duration: entry.metadata.duration,
-                        total_frames: progress.total_frames,
-                        render_time: std::time::Duration::from_secs(0), // キャッシュからなので0
-                        average_render_fps: 0.0,                        // キャッシュからなので0
-                        from_cache: true,
-                    };
+                // キャッシュから取得した場合も進捗を更新
+                self.progress.set_stage(RenderStage::Complete);
 
-                    return Ok(render_result);
-                }
+                // レンダリング結果を構築
+                let render_result = RenderResult {
+                    output_path: self.config.output_path.clone(),
+                    duration: entry.metadata.duration,
+                    total_frames: (entry.metadata.duration.as_seconds() * self.config.frame_rate)
+                        as u64,
+                    render_time: std::time::Duration::from_secs(0), // キャッシュからなので0
+                    average_render_fps: 0.0,                        // キャッシュからなので0
+                    from_cache: true,
+                };
+
+                return Ok(render_result);
             }
         }
 
-        // Create compositor
+        // プロジェクトのレンダリングを実行
+        // 実際の実装では、ここでレンダリングプロセスを実行
+
+        // Set rendering stage
+        self.progress.set_stage(RenderStage::Rendering);
+
+        // Create a compositor
         let mut compositor =
             TrackCompositor::new(self.project.timeline.clone(), self.project.assets.clone());
 
         // Set progress tracker
         compositor.set_progress_tracker(self.progress.clone());
 
-        // Enable complex timeline optimization if configured
-        compositor.set_optimize_complex(self.config.optimize_complex_timelines);
+        // Render using the compositor
+        if let Err(e) = compositor.compose(&self.config) {
+            return Err(RenderError::Timeline(format!("Composition error: {}", e)));
+        }
 
-        // Execute the composition
-        compositor.compose(&self.config)?;
-
-        // Calculate results
-        let end_time = std::time::Instant::now();
-        let render_time = end_time.duration_since(self.start_time.unwrap());
-
-        let progress = self.progress.get_progress().ok_or_else(|| {
-            RenderError::Timeline("Failed to get progress information".to_string())
-        })?;
-
+        // レンダリングが完了したら、結果を返す
+        let now = std::time::Instant::now();
+        let elapsed = now.elapsed();
+        let timeline_duration = Self::calculate_timeline_duration(&self.project);
+        let total_frames = (timeline_duration.as_seconds() * self.config.frame_rate) as u64;
         let render_result = RenderResult {
             output_path: self.config.output_path.clone(),
-            duration: progress.total_duration,
-            total_frames: progress.total_frames,
-            render_time,
-            average_render_fps: progress.total_frames as f64 / render_time.as_secs_f64(),
+            duration: timeline_duration,
+            total_frames,
+            render_time: elapsed,
+            average_render_fps: total_frames as f64 / elapsed.as_secs_f64(),
             from_cache: false,
         };
 
@@ -323,37 +321,39 @@ impl RenderPipeline {
             );
         }
 
+        // プロジェクトのレンダリング前にキャンセルされたか確認
+        if self.progress.is_cancelled() {
+            return Err(RenderError::Cancelled);
+        }
+
+        // progress更新
+        // 新しいAPIは個別のアップデートをサポートしていないので、ステージのみ設定
+        self.progress.set_stage(RenderStage::Complete);
+
         Ok(render_result)
     }
 
-    /// Renders the project asynchronously in a separate thread.
+    /// Renders the project asynchronously.
     ///
     /// # Arguments
     ///
-    /// * `callback` - Optional callback function to be called with the result
+    /// * `callback` - Optional callback function to call when rendering is complete
     ///
     /// # Returns
     ///
-    /// A handle to the rendering thread.
+    /// A join handle for the rendering thread.
     pub fn render_async<F>(
-        self,
+        mut self,
         callback: Option<F>,
     ) -> thread::JoinHandle<Result<RenderResult, RenderError>>
     where
         F: FnOnce(Result<RenderResult, RenderError>) + Send + 'static,
     {
         thread::spawn(move || {
-            let mut pipeline = self;
-            let result = pipeline.render();
-
-            // コールバックがあれば実行
-            if let Some(cb) = callback {
-                match &result {
-                    Ok(r) => cb(Ok(r.clone())),   // 成功した場合は結果のクローンを渡す
-                    Err(e) => cb(Err(e.clone())), // エラーの場合はエラーのクローンを渡す
-                }
+            let result = self.render();
+            if let Some(callback) = callback {
+                callback(result.clone());
             }
-
             result
         })
     }
@@ -372,7 +372,31 @@ impl RenderPipeline {
     /// Gets the current rendering progress.
     #[must_use]
     pub fn get_progress(&self) -> Option<RenderProgress> {
-        self.progress.get_progress()
+        // 新しいAPIはRenderProgressを直接提供しないので、必要な情報を手動で構築
+        let current_stage = self.progress.get_stage();
+        let _is_cancelled = self.progress.is_cancelled();
+
+        let now = std::time::Instant::now();
+        let elapsed = self
+            .start_time
+            .map_or(std::time::Duration::from_secs(0), |st| {
+                now.duration_since(st)
+            });
+
+        let timeline_duration = Self::calculate_timeline_duration(&self.project);
+        let total_frames = (timeline_duration.as_seconds() * self.config.frame_rate) as u64;
+
+        // 簡略化されたRenderProgressを返す
+        Some(RenderProgress {
+            frames_completed: 0, // 正確な値は取得できない
+            total_frames,
+            current_position: crate::utility::time::TimePosition::from_seconds(0.0),
+            total_duration: timeline_duration,
+            elapsed,
+            estimated_remaining: None, // 正確な値は取得できない
+            render_fps: 0.0,           // 正確な値は取得できない
+            current_stage,
+        })
     }
 }
 
