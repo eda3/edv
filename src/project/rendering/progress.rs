@@ -43,12 +43,16 @@ pub struct RenderProgress {
 pub enum RenderStage {
     /// Initial preparation stage
     Preparing,
+    /// Processing assets stage
+    Processing,
     /// Main rendering stage
     Rendering,
     /// Post-processing stage
     PostProcessing,
     /// Rendering complete
     Complete,
+    /// Alternative name for Complete (for API compatibility)
+    Completed,
     /// Rendering cancelled
     Cancelled,
 }
@@ -59,9 +63,11 @@ impl RenderStage {
     pub fn description(&self) -> &'static str {
         match self {
             Self::Preparing => "Preparing to render",
+            Self::Processing => "Processing assets",
             Self::Rendering => "Rendering",
             Self::PostProcessing => "Post-processing the rendered output",
             Self::Complete => "Render complete",
+            Self::Completed => "Render completed",
             Self::Cancelled => "Render cancelled",
         }
     }
@@ -240,6 +246,10 @@ pub struct SharedProgressTracker {
     stage: std::sync::Arc<std::sync::Mutex<RenderStage>>,
     /// Whether rendering has been cancelled
     cancelled: std::sync::Arc<std::sync::atomic::AtomicBool>,
+    /// Total number of items to process
+    total: std::sync::Arc<std::sync::Mutex<u64>>,
+    /// Current progress value
+    progress: std::sync::Arc<std::sync::Mutex<u64>>,
 }
 
 impl SharedProgressTracker {
@@ -252,7 +262,49 @@ impl SharedProgressTracker {
         Self {
             stage: std::sync::Arc::new(std::sync::Mutex::new(RenderStage::Preparing)),
             cancelled: std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false)),
+            total: std::sync::Arc::new(std::sync::Mutex::new(0)),
+            progress: std::sync::Arc::new(std::sync::Mutex::new(0)),
         }
+    }
+
+    /// Sets the total number of items to process.
+    ///
+    /// # Arguments
+    ///
+    /// * `total` - The total number of items
+    pub fn set_total(&self, total: u64) {
+        if let Ok(mut total_lock) = self.total.lock() {
+            *total_lock = total;
+        }
+    }
+
+    /// Increments the progress counter.
+    ///
+    /// # Arguments
+    ///
+    /// * `delta` - The amount to increment by
+    pub fn increment_progress(&self, delta: u64) {
+        if let Ok(mut progress_lock) = self.progress.lock() {
+            *progress_lock += delta;
+        }
+    }
+
+    /// Gets the current progress value.
+    ///
+    /// # Returns
+    ///
+    /// The current progress value.
+    pub fn get_progress(&self) -> u64 {
+        self.progress.lock().map(|progress| *progress).unwrap_or(0)
+    }
+
+    /// Gets the total number of items.
+    ///
+    /// # Returns
+    ///
+    /// The total number of items.
+    pub fn get_total(&self) -> u64 {
+        self.total.lock().map(|total| *total).unwrap_or(0)
     }
 
     /// Sets the current rendering stage.

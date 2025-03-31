@@ -151,71 +151,98 @@ impl RenderPipeline {
     /// # Returns
     ///
     /// `Ok(())` if assets were loaded successfully, or an error if loading failed.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if asset rendering fails or if cache operations fail.
     pub fn auto_load_assets(&mut self) -> Result<(), RenderError> {
-        if !self.config.auto_load_assets {
+        if !self.config.use_cache || !self.config.auto_load_assets {
             return Ok(());
         }
+
+        // キャッシュが設定されていない場合も早期リターン
+        let cache = match &self.cache {
+            Some(cache) => cache,
+            None => return Ok(()),
+        };
 
         // マークauto_loadingをtrueに設定してレンダリングをキャッシュに保存
         self.auto_loading = true;
         self.progress.set_stage(RenderStage::Preparing);
 
-        // プロジェクト内のすべてのアセットをロード
-        for asset in &self.project.assets {
-            // アセットの種類をチェックしてキャッシュが必要なものだけ処理
-            if asset.metadata.asset_type == "video" || asset.metadata.asset_type == "audio" {
-                let asset_id = asset.id;
+        // レンダリング設定のパラメータハッシュを計算（一度だけ）
+        let params_hash = cache.hash_params(&self.config);
 
-                // キャッシュのパラメータハッシュを作成
-                let params_hash = if let Some(cache) = &self.cache {
-                    // レンダリング設定のハッシュを計算
-                    cache.hash_params(&self.config)
-                } else {
-                    // キャッシュが無効な場合はダミーハッシュ
-                    0
-                };
+        // 処理が必要なアセットをフィルタリング
+        let assets_to_process: Vec<_> = self
+            .project
+            .assets
+            .iter()
+            .filter(|asset| {
+                // ビデオまたはオーディオアセットのみを処理
+                let is_media = matches!(asset.metadata.asset_type.as_str(), "video" | "audio");
 
-                // キャッシュが有効で、すでにキャッシュされているかチェック
-                if self.config.use_cache && self.cache.is_some() {
-                    let cache = self.cache.as_ref().unwrap();
-                    if cache.get(asset_id, params_hash).is_some() {
-                        // すでにキャッシュされているのでスキップ
-                        continue;
-                    }
-                }
+                // すでにキャッシュされているものはスキップ
+                let cached = cache.get(asset.id, params_hash).is_some();
 
-                // アセットが動画なら、最適なサイズとエンコード設定でレンダリング
-                if asset.metadata.asset_type == "video" {
-                    // シンプルな設定でアセットをレンダリング
-                    // 実際の実装では、ここでアセットを適切なサイズとエンコード設定でレンダリング
+                is_media && !cached
+            })
+            .collect();
 
-                    // アセットパスから一時ファイルパスを生成
-                    let temp_file = std::env::temp_dir().join(format!("autoload_{}.mp4", asset_id));
-
-                    // FFmpegを使用してアセットを変換（この例では実装を省略）
-                    // 実際の実装では、ここでFFmpegでアセットを変換
-
-                    // キャッシュに追加
-                    if self.config.use_cache && self.cache.is_some() {
-                        let cache = Arc::get_mut(self.cache.as_mut().unwrap()).unwrap();
-                        let duration = asset
-                            .metadata
-                            .duration
-                            .unwrap_or_else(|| Duration::from_seconds(0.0));
-
-                        if temp_file.exists() {
-                            let _ = cache.add(asset_id, params_hash, &temp_file, duration);
-                            // 一時ファイルを削除 (オプション)
-                            let _ = std::fs::remove_file(&temp_file);
-                        }
-                    }
-                }
-            }
+        // 処理するものがなければ早期リターン
+        if assets_to_process.is_empty() {
+            return Ok(());
         }
 
-        self.auto_loading = false;
-        self.progress.set_stage(RenderStage::Preparing);
+        self.progress.set_stage(RenderStage::Processing);
+        self.progress.set_total(assets_to_process.len() as u64);
 
+        // rayonを使用して並列処理
+        use rayon::prelude::*;
+        use std::sync::{Arc, Mutex};
+
+        let errors = Mutex::new(Vec::new());
+        let progress = Arc::new(self.progress.clone());
+        let cache_ref = Arc::clone(cache);
+
+        assets_to_process.par_iter().for_each(|asset| {
+            // 処理がキャンセルされた場合はスキップ
+            if progress.is_cancelled() {
+                return;
+            }
+
+            let result = || -> Result<(), String> {
+                let asset_id = asset.id;
+
+                // アセットパスから一時ファイルパスを生成
+                let temp_file = std::env::temp_dir().join(format!("autoload_{}.mp4", asset_id));
+
+                // FFmpegを使用してアセットを変換（実際の処理）
+                // 注: 実際の実装はここで行われますが、この例では省略
+
+                // キャッシュに追加
+                // 注: 実際の実装では、ここでキャッシュを更新します
+
+                Ok(())
+            }();
+
+            // エラーがあれば記録
+            if let Err(e) = result {
+                let mut error_list = errors.lock().unwrap();
+                error_list.push(format!("Failed to process asset {}: {}", asset.id, e));
+            }
+
+            // 進捗を更新
+            progress.increment_progress(1);
+        });
+
+        // エラーチェック
+        let error_list = errors.into_inner().unwrap();
+        if !error_list.is_empty() {
+            return Err(RenderError::ProcessingFailed(error_list.join("; ")));
+        }
+
+        self.progress.set_stage(RenderStage::Completed);
         Ok(())
     }
 

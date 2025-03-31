@@ -21,11 +21,23 @@ pub enum Error {
 
     /// IO error.
     #[error("IO error: {0}")]
-    IoError(#[from] io::Error),
+    IoError(String),
 
     /// Error parsing `FFmpeg` output.
     #[error("Error parsing FFmpeg output: {0}")]
     ParseError(String),
+
+    /// Missing output file specification.
+    #[error("No output file specified")]
+    MissingOutput,
+
+    /// Missing input file specification.
+    #[error("No input files specified")]
+    MissingInput,
+
+    /// Process execution error.
+    #[error("Process error: {0}")]
+    ProcessError(String),
 }
 
 /// Result type for `FFmpeg` operations.

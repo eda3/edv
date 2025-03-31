@@ -47,6 +47,10 @@ pub enum RenderError {
     /// Cache error.
     #[error("Cache error: {0}")]
     Cache(String),
+
+    /// Asset processing failed.
+    #[error("Asset processing failed: {0}")]
+    ProcessingFailed(String),
 }
 
 impl From<std::io::Error> for RenderError {

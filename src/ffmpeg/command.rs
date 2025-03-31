@@ -32,12 +32,16 @@ impl<'a> FFmpegCommand<'a> {
     /// * `ffmpeg` - The `FFmpeg` instance to use
     #[must_use]
     pub fn new(ffmpeg: &'a FFmpeg) -> Self {
+        // 一般的なコマンドでは、ある程度のオプションが想定されるため、
+        // 初期容量を設定してメモリの再割り当てを減らす
+        const INITIAL_CAPACITY: usize = 8;
+
         Self {
             ffmpeg,
-            input_options: Vec::new(),
-            inputs: Vec::new(),
+            input_options: Vec::with_capacity(INITIAL_CAPACITY),
+            inputs: Vec::with_capacity(2), // 一般的には1-2の入力ファイル
             filter_complex: None,
-            output_options: Vec::new(),
+            output_options: Vec::with_capacity(INITIAL_CAPACITY),
             output: None,
             overwrite: false,
         }
@@ -56,8 +60,17 @@ impl<'a> FFmpegCommand<'a> {
         &mut self,
         options: I,
     ) -> &mut Self {
+        // 必要に応じて容量を確保
+        let options_iter = options.into_iter();
+        let (lower, upper) = options_iter.size_hint();
+        let estimated_size = upper.unwrap_or(lower);
+
+        if estimated_size > 0 {
+            self.input_options.reserve(estimated_size);
+        }
+
         self.input_options
-            .extend(options.into_iter().map(|s| s.as_ref().to_string()));
+            .extend(options_iter.map(|s| s.as_ref().to_string()));
         self
     }
 
@@ -198,76 +211,76 @@ impl<'a> FFmpegCommand<'a> {
     ///
     /// # Errors
     ///
-    /// This function can return the following errors:
-    /// * `Error::MissingArgument` - If no input files are specified or no output file is specified
-    /// * `Error::IoError` - If the `FFmpeg` process fails to start
-    /// * `Error::ProcessTerminated` - If the `FFmpeg` process returns a non-zero exit code
-    ///
-    /// # Panics
-    ///
-    /// This function should not panic as it performs explicit checks before using `unwrap()`.
-    /// If `self.output` is `None`, it returns an error before attempting to unwrap.
+    /// Returns an error if the command fails to execute or returns a non-zero exit code.
     pub fn execute(&self) -> Result<()> {
-        // Check that we have inputs and an output
-        if self.inputs.is_empty() {
-            return Err(Error::MissingArgument(
-                "No input files specified".to_string(),
-            ));
-        }
-
+        // バリデーションチェック
         if self.output.is_none() {
             return Err(Error::MissingArgument(
                 "No output file specified".to_string(),
             ));
         }
 
-        // Build the command
-        let mut cmd = Command::new(self.ffmpeg.path());
-
-        // Add global options
-        if self.overwrite {
-            cmd.arg("-y");
+        if self.inputs.is_empty() {
+            return Err(Error::MissingArgument(
+                "No input files specified".to_string(),
+            ));
         }
 
-        // Add input options and inputs
-        for i in 0..self.inputs.len() {
-            // Add input options for this input
-            if i == 0 && !self.input_options.is_empty() {
-                for option in &self.input_options {
-                    cmd.arg(option);
-                }
+        // コマンドの構築
+        let mut command = Command::new(self.ffmpeg.path());
+
+        // まず、ストリーム処理を効率化するためにバッファリングを設定
+        command.stdout(Stdio::piped());
+        command.stderr(Stdio::piped());
+
+        // 入力オプションとファイル
+        if !self.input_options.is_empty() {
+            command.args(&self.input_options);
+        }
+
+        for input in &self.inputs {
+            command.arg("-i").arg(input);
+        }
+
+        // フィルター複合体がある場合
+        if let Some(filter) = &self.filter_complex {
+            command.arg("-filter_complex").arg(filter);
+        }
+
+        // 出力オプション
+        if !self.output_options.is_empty() {
+            command.args(&self.output_options);
+        }
+
+        // 上書きフラグがある場合は-yフラグを追加
+        if self.overwrite {
+            command.arg("-y");
+        }
+
+        // 最後に出力ファイルを追加
+        // (unwrapは問題ありません。既に上で出力が存在するか確認しているため)
+        command.arg(self.output.as_ref().unwrap());
+
+        // コマンドを実行
+        let output = command.output().map_err(|e| Error::IoError(e))?;
+
+        // 終了コードをチェック
+        if !output.status.success() {
+            // FFmpegのエラーメッセージを取得して返す
+            let stderr = String::from_utf8_lossy(&output.stderr);
+            let error_message = stderr
+                .lines()
+                .filter(|line| line.contains("Error") || line.contains("Invalid"))
+                .collect::<Vec<_>>()
+                .join("\n");
+
+            if !error_message.is_empty() {
+                return Err(Error::ExecutionError(error_message));
             }
 
-            // Add the input
-            cmd.arg("-i").arg(&self.inputs[i]);
-        }
-
-        // Add filter complex if specified
-        if let Some(filter) = &self.filter_complex {
-            cmd.arg("-filter_complex").arg(filter);
-        }
-
-        // Add output options
-        for option in &self.output_options {
-            cmd.arg(option);
-        }
-
-        // Add output
-        cmd.arg(self.output.as_ref().unwrap());
-
-        // Execute the command
-        let output = cmd
-            .stderr(Stdio::piped())
-            .stdout(Stdio::piped())
-            .output()
-            .map_err(Error::IoError)?;
-
-        // Check for success
-        if !output.status.success() {
-            let stderr = String::from_utf8_lossy(&output.stderr);
             return Err(Error::ProcessTerminated {
                 exit_code: output.status.code(),
-                message: format!("FFmpeg process failed: {stderr}"),
+                message: format!("FFmpeg process failed with exit code: {}", output.status),
             });
         }
 
