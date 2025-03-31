@@ -86,9 +86,11 @@ use std::hash::{Hash, Hasher};
 use std::path::Path;
 use std::process::{Command, Stdio};
 
+use crate::ffmpeg::FFmpeg;
 use crate::project::AssetId;
 use crate::project::AssetReference;
 use crate::project::rendering::config::{AudioCodec, RenderConfig, VideoCodec};
+use crate::project::rendering::gpu_accelerator::GpuAccelerator;
 use crate::project::rendering::progress::{RenderStage, SharedProgressTracker};
 use crate::project::timeline::keyframes::{EasingFunction, KeyframeAnimation};
 use crate::project::timeline::multi_track;
@@ -354,6 +356,9 @@ pub struct TrackCompositor {
 
     /// Whether to optimize for complex timelines.
     optimize_complex: bool,
+
+    /// GPU accelerator for hardware-accelerated rendering.
+    gpu_accelerator: Option<GpuAccelerator>,
 }
 
 impl TrackCompositor {
@@ -375,6 +380,7 @@ impl TrackCompositor {
             intermediate_files: Vec::new(),
             progress: None,
             optimize_complex: false,
+            gpu_accelerator: None,
         }
     }
 
@@ -386,6 +392,15 @@ impl TrackCompositor {
     /// Sets whether to optimize for complex timelines.
     pub fn set_optimize_complex(&mut self, optimize: bool) {
         self.optimize_complex = optimize;
+    }
+
+    /// Sets the GPU accelerator to use for rendering.
+    ///
+    /// # Arguments
+    ///
+    /// * `accelerator` - Reference to the GPU accelerator
+    pub fn set_gpu_accelerator(&mut self, accelerator: GpuAccelerator) {
+        self.gpu_accelerator = Some(accelerator);
     }
 
     /// Gets the asset with the given ID.
@@ -713,25 +728,39 @@ impl TrackCompositor {
     ///
     /// `Ok(())` if composition was successful, or an error if composition failed.
     pub fn compose(&mut self, config: &RenderConfig) -> Result<()> {
-        // Ensure the timeline has tracks
-        if self.timeline.get_tracks().is_empty() {
+        self.update_progress(RenderStage::Preparing);
+
+        // Validate output path
+        if config.output_path.as_os_str().is_empty() {
             return Err(CompositionError::IncompatibleTracks(
-                "Timeline has no tracks".to_string(),
+                "Output path is empty".to_string(),
             ));
         }
 
-        // Prepare tracks for composition
-        let prepared_tracks = self.prepare_tracks(config)?;
+        // Create output directory if it doesn't exist
+        if let Some(parent) = config.output_path.parent() {
+            std::fs::create_dir_all(parent).map_err(CompositionError::IntermediateFileError)?;
+        }
 
-        // Check if the composition has been canceled
+        // Prepare tracks
+        let prepared_tracks = if self.optimize_complex {
+            self.prepare_tracks(config)?
+        } else {
+            self.prepare_tracks(config)?
+        };
+
+        // Check for cancellation
         if self.is_cancelled() {
             return Err(CompositionError::IncompatibleTracks(
-                "Composition cancelled".to_string(),
+                "Rendering cancelled".to_string(),
             ));
         }
 
-        // Composite the prepared tracks
+        // Composite prepared tracks to produce the final output
         self.composite_tracks(prepared_tracks, config, &config.output_path)?;
+
+        // Update progress
+        self.update_progress(RenderStage::Completed);
 
         Ok(())
     }
@@ -1212,150 +1241,177 @@ impl TrackCompositor {
         config: &RenderConfig,
         output_path: &Path,
     ) -> Result<()> {
-        if prepared_tracks.is_empty() {
-            return Err(CompositionError::IncompatibleTracks(
-                "No prepared tracks to composite".to_string(),
-            ));
-        }
-
-        // Build FFmpeg command
-        let mut ffmpeg = FFmpegCommand::new();
-
-        // Track classify by type
-        let mut video_tracks: Vec<&PreparedTrack> = Vec::new();
-        let mut audio_tracks: Vec<&PreparedTrack> = Vec::new();
-        let mut subtitle_tracks: Vec<&PreparedTrack> = Vec::new();
-
-        // Add all input files and classify by track type
-        self.update_progress(RenderStage::Preparing);
-
-        for track in prepared_tracks.values() {
-            if let Some(file) = &track.file {
-                ffmpeg.add_input(file.path());
-
-                match track.kind {
-                    TrackKind::Video => video_tracks.push(track),
-                    TrackKind::Audio => audio_tracks.push(track),
-                    TrackKind::Subtitle => subtitle_tracks.push(track),
-                }
-            }
-        }
-
-        // Build filter graph
-        let mut complex_filter = String::new();
-
-        // Build video track filter graph
-        if !video_tracks.is_empty() {
-            complex_filter.push_str(&self.generate_video_filtergraph(&video_tracks, config));
-        }
-
-        // Build audio track filter graph
-        if !audio_tracks.is_empty() {
-            // If video filter exists, separate with semicolon
-            if !complex_filter.is_empty() {
-                complex_filter.push(';');
-            }
-            complex_filter.push_str(&self.generate_audio_filtergraph(&audio_tracks, config));
-        }
-
-        // If filter exists, add filter to command
-        if !complex_filter.is_empty() {
-            ffmpeg.add_complex_filter(&complex_filter);
-
-            // Filter output mapping
-            if !video_tracks.is_empty() {
-                ffmpeg.add_arg("-map", &format!("[v{}]", video_tracks.len()));
-            }
-            if !audio_tracks.is_empty() {
-                ffmpeg.add_arg("-map", "[aout]");
-            }
-        } else {
-            // If no filter, use default mapping
-            if !video_tracks.is_empty() {
-                ffmpeg.add_arg("-map", "0:v");
-            }
-            if !audio_tracks.is_empty() {
-                ffmpeg.add_arg("-map", "0:a");
-            }
-        }
-
-        // Subtitle track mapping
-        if !subtitle_tracks.is_empty() {
-            // Subtitle track mapping logic (simplified)
-            ffmpeg.add_arg("-map", "0:s");
-        }
-
-        // Output format and quality setting
-        ffmpeg.set_output(output_path);
-
-        // Video codec setting
-        if !video_tracks.is_empty() {
-            ffmpeg.add_arg("-c:v", config.video_codec.to_ffmpeg_codec());
-            ffmpeg.add_arg("-pix_fmt", "yuv420p"); // Standard pixel format for compatibility
-
-            // Quality setting
-            if config.video_codec != VideoCodec::Copy {
-                // Example: CRF setting for H.264 / H.265
-                if config.video_codec == VideoCodec::H264 || config.video_codec == VideoCodec::H265
-                {
-                    ffmpeg.add_arg("-crf", "23"); // Default quality value
-                }
-            }
-
-            // Preset setting (balance encoding speed and compression rate)
-            if config.video_codec == VideoCodec::H264 || config.video_codec == VideoCodec::H265 {
-                ffmpeg.add_arg("-preset", "medium");
-            }
-
-            // Frame rate setting
-            ffmpeg.add_arg("-r", &config.frame_rate.to_string());
-        }
-
-        // Audio codec setting
-        if !audio_tracks.is_empty() {
-            ffmpeg.add_arg("-c:a", config.audio_codec.to_ffmpeg_codec());
-            // Audio quality setting
-            if config.audio_codec != AudioCodec::Copy {
-                ffmpeg.add_arg("-b:a", "192k");
-            }
-        }
-
-        // Subtitle setting
-        if !subtitle_tracks.is_empty() {
-            ffmpeg.add_arg("-c:s", "mov_text"); // Compatible subtitle format
-        }
-
-        // Optimization for complex timeline
-        if self.optimize_complex {
-            // Optimization options for complex timeline
-            if video_tracks.len() > 3 {
-                // Use multi-pass encoding
-                ffmpeg.args.push("-pass".to_string());
-                ffmpeg.args.push("1".to_string());
-
-                // Adjust video bit rate
-                ffmpeg.args.push("-b:v".to_string());
-                ffmpeg
-                    .args
-                    .push(format!("{}k", config.width * config.height / 1000));
-
-                // Specify thread count
-                ffmpeg.args.push("-threads".to_string());
-                ffmpeg.args.push(num_cpus::get().to_string());
-            }
-        }
-
-        // Start rendering
+        // Set rendering stage
         self.update_progress(RenderStage::Rendering);
 
-        // Execute FFmpeg
-        ffmpeg.run()?;
+        // Build FFmpeg command
+        let mut ffmpeg = FFmpeg::detect().map_err(CompositionError::FFmpeg)?;
+        let mut command = ffmpeg.command();
 
-        // Complete
-        self.update_progress(RenderStage::PostProcessing);
+        // Apply GPU acceleration for decoding if available
+        if let Some(gpu_acc) = &self.gpu_accelerator {
+            if gpu_acc.is_enabled() {
+                // Add global hardware acceleration options
+                for option in gpu_acc.get_decoder_options() {
+                    command.add_input_option(option, "");
+                }
+            }
+        }
 
-        // Rendering complete
-        self.update_progress(RenderStage::Complete);
+        // Separate tracks by kind
+        let video_tracks: Vec<_> = prepared_tracks
+            .values()
+            .filter(|track| track.kind == TrackKind::Video && track.file.is_some())
+            .collect();
+
+        let audio_tracks: Vec<_> = prepared_tracks
+            .values()
+            .filter(|track| track.kind == TrackKind::Audio && track.file.is_some())
+            .collect();
+
+        // Add input files
+        for track in &video_tracks {
+            if let Some(file) = &track.file {
+                command.add_input(file.path());
+            }
+        }
+
+        for track in &audio_tracks {
+            if let Some(file) = &track.file {
+                command.add_input(file.path());
+            }
+        }
+
+        // Generate filtergraphs
+        let video_filtergraph = self.generate_video_filtergraph(&video_tracks, config);
+        let audio_filtergraph = self.generate_audio_filtergraph(&audio_tracks, config);
+
+        // Add filtergraphs if they're not empty
+        let mut filtergraph = String::new();
+
+        if !video_filtergraph.is_empty() {
+            filtergraph.push_str(&video_filtergraph);
+        }
+
+        if !audio_filtergraph.is_empty() {
+            if !filtergraph.is_empty() {
+                filtergraph.push(';');
+            }
+            filtergraph.push_str(&audio_filtergraph);
+        }
+
+        if !filtergraph.is_empty() {
+            command.add_output_option("-filter_complex", &filtergraph);
+        }
+
+        // Set output options
+        // Select video and audio codec
+        let video_codec = config.video_codec;
+        let audio_codec = config.audio_codec;
+
+        // Apply hardware acceleration for encoding if available
+        if let Some(gpu_acc) = &self.gpu_accelerator {
+            if gpu_acc.is_enabled() {
+                // Set hardware encoder
+                let hw_encoder = gpu_acc.get_encoder_name(video_codec);
+                command.add_output_option("-c:v", &hw_encoder);
+
+                // Add encoder-specific options
+                for option in gpu_acc.get_encoder_options(video_codec, config.video_quality) {
+                    let parts: Vec<&str> = option.splitn(2, ' ').collect();
+                    if parts.len() == 2 {
+                        command.add_output_option(parts[0], parts[1]);
+                    } else if !option.is_empty() {
+                        command.add_output_option(option, "");
+                    }
+                }
+            } else {
+                // Use software encoder
+                command.add_output_option("-c:v", video_codec.to_ffmpeg_codec());
+
+                // Set quality/bitrate based on codec and quality setting
+                match video_codec {
+                    VideoCodec::H264 | VideoCodec::H265 => {
+                        let crf =
+                            30 - ((config.video_quality as f32 / 100.0) * 28.0).round() as i32;
+                        command.add_output_option("-crf", &crf.to_string());
+                        command.add_output_option("-preset", "medium");
+                    }
+                    VideoCodec::VP9 => {
+                        let bitrate = ((config.video_quality as f32 / 100.0) * 8000.0 + 2000.0)
+                            .round() as u32;
+                        command.add_output_option("-b:v", &format!("{}k", bitrate));
+                    }
+                    VideoCodec::AV1 => {
+                        let crf =
+                            30 - ((config.video_quality as f32 / 100.0) * 25.0).round() as i32;
+                        command.add_output_option("-crf", &crf.to_string());
+                    }
+                    VideoCodec::Copy => { /* No options needed for copy */ }
+                }
+            }
+        } else {
+            // Use software encoder
+            command.add_output_option("-c:v", video_codec.to_ffmpeg_codec());
+
+            // Set quality/bitrate based on codec and quality setting
+            match video_codec {
+                VideoCodec::H264 | VideoCodec::H265 => {
+                    let crf = 30 - ((config.video_quality as f32 / 100.0) * 28.0).round() as i32;
+                    command.add_output_option("-crf", &crf.to_string());
+                    command.add_output_option("-preset", "medium");
+                }
+                VideoCodec::VP9 => {
+                    let bitrate =
+                        ((config.video_quality as f32 / 100.0) * 8000.0 + 2000.0).round() as u32;
+                    command.add_output_option("-b:v", &format!("{}k", bitrate));
+                }
+                VideoCodec::AV1 => {
+                    let crf = 30 - ((config.video_quality as f32 / 100.0) * 25.0).round() as i32;
+                    command.add_output_option("-crf", &crf.to_string());
+                }
+                VideoCodec::Copy => { /* No options needed for copy */ }
+            }
+        }
+
+        // Audio codec options
+        command.add_output_option("-c:a", audio_codec.to_ffmpeg_codec());
+
+        // Set audio quality based on codec and quality setting
+        match audio_codec {
+            AudioCodec::AAC => {
+                let bitrate = ((config.audio_quality as f32 / 100.0) * 320.0 + 64.0).round() as u32;
+                command.add_output_option("-b:a", &format!("{}k", bitrate));
+            }
+            AudioCodec::Opus => {
+                let bitrate = ((config.audio_quality as f32 / 100.0) * 256.0 + 32.0).round() as u32;
+                command.add_output_option("-b:a", &format!("{}k", bitrate));
+            }
+            AudioCodec::MP3 => {
+                let bitrate = ((config.audio_quality as f32 / 100.0) * 320.0 + 64.0).round() as u32;
+                command.add_output_option("-b:a", &format!("{}k", bitrate));
+            }
+            AudioCodec::Vorbis => {
+                let quality = ((config.audio_quality as f32 / 100.0) * 10.0).round() as i32;
+                command.add_output_option("-q:a", &quality.to_string());
+            }
+            AudioCodec::Copy => { /* No options needed for copy */ }
+        }
+
+        // Set output format based on container
+        command.add_output_option("-f", config.format.extension());
+
+        // Set pixel format (needed for some encoders)
+        if !matches!(video_codec, VideoCodec::Copy) {
+            command.add_output_option("-pix_fmt", "yuv420p");
+        }
+
+        // Set output path and overwrite flag
+        command.set_output(output_path);
+        command.overwrite(true);
+
+        // Execute the command
+        command.execute().map_err(CompositionError::FFmpeg)?;
 
         Ok(())
     }

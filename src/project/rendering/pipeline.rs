@@ -9,6 +9,7 @@ use std::thread;
 use crate::project::Project;
 use crate::project::rendering::compositor::TrackCompositor;
 use crate::project::rendering::config::RenderConfig;
+use crate::project::rendering::gpu_accelerator::{self, GpuAccelerator};
 use crate::project::rendering::progress::{
     ProgressCallback, RenderProgress, RenderStage, SharedProgressTracker,
 };
@@ -57,6 +58,9 @@ pub struct RenderPipeline {
 
     /// Whether the pipeline is currently in auto-loading mode.
     auto_loading: bool,
+
+    /// GPU accelerator for hardware-accelerated rendering.
+    gpu_accelerator: Option<GpuAccelerator>,
 }
 
 impl RenderPipeline {
@@ -83,6 +87,7 @@ impl RenderPipeline {
             start_time: None,
             cache: None,
             auto_loading: false,
+            gpu_accelerator: None,
         }
     }
 
@@ -246,118 +251,125 @@ impl RenderPipeline {
         Ok(())
     }
 
+    /// Initializes GPU acceleration for the rendering pipeline.
+    ///
+    /// # Arguments
+    ///
+    /// * `ffmpeg` - The FFmpeg instance to use
+    ///
+    /// # Returns
+    ///
+    /// `Ok(())` if GPU acceleration was initialized, or an error if initialization failed.
+    pub fn init_gpu_acceleration(
+        &mut self,
+        ffmpeg: Arc<crate::ffmpeg::FFmpeg>,
+    ) -> Result<(), RenderError> {
+        // Skip if GPU acceleration is disabled in config
+        if !self.config.should_use_hardware_acceleration() {
+            return Ok(());
+        }
+
+        // Try to initialize GPU acceleration
+        match gpu_accelerator::create_gpu_accelerator(ffmpeg, &self.config) {
+            Ok(accelerator) => {
+                self.gpu_accelerator = Some(accelerator);
+                Ok(())
+            }
+            Err(e) => {
+                // Log the error but don't fail - we'll fall back to CPU
+                eprintln!("Failed to initialize GPU acceleration: {e}");
+                Ok(())
+            }
+        }
+    }
+
+    /// Checks if GPU acceleration is available and enabled.
+    ///
+    /// # Returns
+    ///
+    /// `true` if GPU acceleration is available and enabled, `false` otherwise.
+    pub fn is_gpu_accelerated(&self) -> bool {
+        self.gpu_accelerator
+            .as_ref()
+            .map_or(false, |acc| acc.is_enabled())
+    }
+
+    /// Gets a reference to the GPU accelerator.
+    ///
+    /// # Returns
+    ///
+    /// An optional reference to the GPU accelerator.
+    pub fn gpu_accelerator(&self) -> Option<&GpuAccelerator> {
+        self.gpu_accelerator.as_ref()
+    }
+
     /// Renders the project synchronously.
     ///
     /// # Returns
     ///
-    /// A `Result` containing rendering results on success, or an error if rendering failed.
+    /// A `Result` containing render statistics on success, or an error if rendering failed.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the rendering process fails for any reason.
     pub fn render(&mut self) -> Result<RenderResult, RenderError> {
+        // Record start time
         self.start_time = Some(std::time::Instant::now());
 
-        // Validate output path
-        if self.config.output_path.as_os_str().is_empty() {
-            return Err(RenderError::Timeline("Output path is empty".to_string()));
-        }
+        // Update progress
+        self.progress.set_stage(RenderStage::Preparing);
 
-        // Ensure the output directory exists
-        if let Some(parent) = self.config.output_path.parent() {
-            std::fs::create_dir_all(parent).map_err(RenderError::from)?;
-        }
-
-        // キャッシュが設定され、使用する場合はプロジェクト全体のキャッシュをチェック
-        if self.config.use_cache && self.cache.is_some() {
-            let cache = self.cache.as_ref().unwrap();
-
-            // プロジェクト全体のハッシュを計算（簡略化のためproject_id + 固定値を使用）
-            let project_hash = 12345; // 実際の実装では、プロジェクト構造から適切なハッシュを計算
-
-            // すべてのアセットIDを取得（これは実際のアセットIDではなく、ダミー）
-            let dummy_asset_id = crate::project::AssetId::new();
-
-            // キャッシュをチェック
-            if let Some(entry) = cache.get(dummy_asset_id, project_hash) {
-                // キャッシュから読み込めた場合は、そのまま返す
-                // 実際の実装では、キャッシュされたレンダリング結果を検証
-
-                // キャッシュから取得した場合も進捗を更新
-                self.progress.set_stage(RenderStage::Complete);
-
-                // レンダリング結果を構築
-                let render_result = RenderResult {
-                    output_path: self.config.output_path.clone(),
-                    duration: entry.metadata.duration,
-                    total_frames: (entry.metadata.duration.as_seconds() * self.config.frame_rate)
-                        as u64,
-                    render_time: std::time::Duration::from_secs(0), // キャッシュからなので0
-                    average_render_fps: 0.0,                        // キャッシュからなので0
-                    from_cache: true,
-                };
-
-                return Ok(render_result);
-            }
-        }
-
-        // プロジェクトのレンダリングを実行
-        // 実際の実装では、ここでレンダリングプロセスを実行
-
-        // Set rendering stage
-        self.progress.set_stage(RenderStage::Rendering);
-
-        // Create a compositor
-        let mut compositor =
-            TrackCompositor::new(self.project.timeline.clone(), self.project.assets.clone());
-
-        // Set progress tracker
-        compositor.set_progress_tracker(self.progress.clone());
-
-        // Render using the compositor
-        if let Err(e) = compositor.compose(&self.config) {
-            return Err(RenderError::Timeline(format!("Composition error: {}", e)));
-        }
-
-        // レンダリングが完了したら、結果を返す
-        let now = std::time::Instant::now();
-        let elapsed = now.elapsed();
-        let timeline_duration = Self::calculate_timeline_duration(&self.project);
-        let total_frames = (timeline_duration.as_seconds() * self.config.frame_rate) as u64;
-        let render_result = RenderResult {
-            output_path: self.config.output_path.clone(),
-            duration: timeline_duration,
-            total_frames,
-            render_time: elapsed,
-            average_render_fps: total_frames as f64 / elapsed.as_secs_f64(),
-            from_cache: false,
-        };
-
-        // プロジェクト全体をキャッシュに追加（auto_loading中は行わない）
-        if !self.auto_loading && self.config.use_cache && self.cache.is_some() {
-            let cache = Arc::get_mut(self.cache.as_mut().unwrap()).unwrap();
-
-            // プロジェクト全体のハッシュを計算（簡略化のためproject_id + 固定値を使用）
-            let project_hash = 12345; // 実際の実装では、プロジェクト構造から適切なハッシュを計算
-
-            // すべてのアセットIDを取得（これは実際のアセットIDではなく、ダミー）
-            let dummy_asset_id = crate::project::AssetId::new();
-
-            // キャッシュに追加
-            let _ = cache.add(
-                dummy_asset_id,
-                project_hash,
-                &self.config.output_path,
-                render_result.duration,
-            );
-        }
-
-        // プロジェクトのレンダリング前にキャンセルされたか確認
+        // Check for cancellation
         if self.progress.is_cancelled() {
             return Err(RenderError::Cancelled);
         }
 
-        // progress更新
-        // 新しいAPIは個別のアップデートをサポートしていないので、ステージのみ設定
-        self.progress.set_stage(RenderStage::Complete);
+        // Create a track compositor
+        let mut compositor =
+            TrackCompositor::new(self.project.timeline.clone(), self.project.assets.clone());
 
-        Ok(render_result)
+        // Set progress tracker and optimization flag
+        compositor.set_progress_tracker(self.progress.clone());
+        compositor.set_optimize_complex(self.config.optimize_complex_timelines);
+
+        // Pass GPU accelerator to compositor if available
+        if let Some(gpu_acc) = &self.gpu_accelerator {
+            compositor.set_gpu_accelerator(gpu_acc.clone());
+        }
+
+        // Compose and render the timeline
+        compositor.compose(&self.config)?;
+
+        // Get render time
+        let render_time = self.start_time.unwrap().elapsed();
+
+        // Calculate timeline duration
+        let timeline_duration = Self::calculate_timeline_duration(&self.project);
+
+        // Calculate total frames
+        let total_frames = (timeline_duration.as_seconds() * self.config.frame_rate) as u64;
+
+        // Calculate average render FPS
+        let avg_fps = if render_time.as_secs() > 0 {
+            total_frames as f64 / render_time.as_secs_f64()
+        } else {
+            0.0
+        };
+
+        // Mark as complete
+        self.progress.set_stage(RenderStage::Completed);
+
+        // Create and return the result
+        let result = RenderResult {
+            output_path: self.config.output_path.clone(),
+            duration: timeline_duration,
+            total_frames,
+            render_time,
+            average_render_fps: avg_fps,
+            from_cache: false,
+        };
+
+        Ok(result)
     }
 
     /// Renders the project asynchronously.
