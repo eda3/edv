@@ -1333,7 +1333,14 @@ mod tests {
         // New blend mode test
         if let Some(track) = compositor.timeline.get_track_mut(track_id) {
             if let Some(keyframes) = track.keyframes_mut() {
+                // Check if keyframe property exists
                 keyframes.create_track_if_missing("blend_mode").unwrap();
+
+                // Try to remove existing keyframes at 0.0 seconds
+                // If it fails with KeyframeNotFound, that's fine - we just continue
+                let _ = keyframes.remove_keyframe("blend_mode", TimePosition::from_seconds(0.0));
+
+                // Add the new keyframe
                 keyframes
                     .add_keyframe(
                         "blend_mode",
