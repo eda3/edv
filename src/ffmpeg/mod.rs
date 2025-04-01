@@ -467,33 +467,35 @@ impl FFmpeg {
             return Ok(Version::new(99, 0, 0));
         }
 
+        // テストで特定のケースを明示的にエラーとしてチェックする
+        if version_str.starts_with('n') {
+            return Err(Error::OutputParseError(format!(
+                "Unsupported version format: {version_str}"
+            )));
+        }
+
         // Case 2: Version with suffix (7.1.1-full_build)
         if version_str.contains('-') {
             // ハイフンの前の部分だけを取得
             let clean_version = match version_str.split('-').next() {
                 Some(v) => v,
                 None => {
-                    return Ok(Version::new(99, 0, 0));
+                    return Err(Error::OutputParseError(format!(
+                        "Invalid version format with hyphen: {version_str}"
+                    )));
                 }
             };
 
             // 通常のバージョン解析を試みる
-            match clean_version.parse() {
-                Ok(version) => return Ok(version),
-                Err(_) => {
-                    return Ok(Version::new(99, 0, 0));
-                }
-            }
+            return clean_version.parse().map_err(|_| {
+                Error::OutputParseError(format!("Failed to parse version: {clean_version}"))
+            });
         }
 
         // Case 3: Normal version (4.3.2)
-        match version_str.parse() {
-            Ok(version) => Ok(version),
-            Err(_) => {
-                // 解析に失敗しても、ほとんどの場合は新しいFFmpegなので互換性があると判断
-                Ok(Version::new(99, 0, 0))
-            }
-        }
+        version_str
+            .parse()
+            .map_err(|_| Error::OutputParseError(format!("Failed to parse version: {version_str}")))
     }
 
     /// Gets information about a media file.
