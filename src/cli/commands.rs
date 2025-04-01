@@ -706,6 +706,7 @@ impl Command for TrimCommand {
         let mut start_time = None;
         let mut end_time = None;
         let mut recompress = false;
+        let mut show_frames = true; // デフォルトでフレーム表示を有効
 
         let mut i = 2;
         while i < args.len() {
@@ -730,6 +731,10 @@ impl Command for TrimCommand {
                 }
                 "--recompress" => {
                     recompress = true;
+                    i += 1;
+                }
+                "--no-frames" => {
+                    show_frames = false;
                     i += 1;
                 }
                 _ => {
@@ -813,6 +818,17 @@ impl Command for TrimCommand {
         context
             .logger
             .info(&format!("Trimmed video saved to: {output_file}"));
+
+        // フレームカウンター表示 - Windows環境では問題があるため実装しない
+        if show_frames && !cfg!(windows) {
+            // Unix環境でのみフレーム表示を行う
+            ffmpeg_cmd
+                .arg("-vf")
+                .arg("drawtext=text=%{n}/%{nb_frames}:fontcolor=white");
+        }
+
+        // 統計情報表示（コンソールに表示）- 常に有効
+        ffmpeg_cmd.add_output_option("-stats", "");
 
         Ok(())
     }
@@ -1103,7 +1119,7 @@ impl Command for PlayCommand {
     }
 
     fn usage(&self) -> &str {
-        "play --input <input_file> [--start <time>] [--end <time>]"
+        "play --input <input_file> [--start <time>] [--end <time>] [--no-frames]"
     }
 
     fn execute(&self, context: &Context, args: &[String]) -> Result<()> {
@@ -1118,6 +1134,7 @@ impl Command for PlayCommand {
         // Parse remaining arguments
         let mut start_time = None;
         let mut end_time = None;
+        let mut show_frames = true; // デフォルトでフレーム表示を有効
 
         let mut i = 1;
         while i < args.len() {
@@ -1139,6 +1156,10 @@ impl Command for PlayCommand {
                     } else {
                         return Err(Error::InvalidArgument("--end requires a value".to_string()));
                     }
+                }
+                "--no-frames" => {
+                    show_frames = false;
+                    i += 1;
                 }
                 _ => {
                     return Err(Error::InvalidArgument(format!(
@@ -1220,6 +1241,22 @@ impl Command for PlayCommand {
         // 同期オプション - ビデオ優先に変更
         cmd.arg("-sync").arg("video");
 
+        // フレーム単位の操作をより正確に行うための設定
+        cmd.arg("-framedrop"); // フレームドロップを許可してスムーズな動作を確保
+
+        // シーク間隔を最小に設定（小さな値にすることで微調整可能に）
+        cmd.arg("-seek_interval").arg("0.001"); // 1ミリ秒単位でシーク
+
+        // フレームカウンター表示 - Windows環境では問題があるため実装しない
+        if show_frames && !cfg!(windows) {
+            // Unix環境でのみフレーム表示を行う
+            cmd.arg("-vf")
+                .arg("drawtext=text=%{n}/%{nb_frames}:fontcolor=white");
+        }
+
+        // 統計情報表示（コンソールに表示）- 常に有効
+        cmd.arg("-stats");
+
         // 入力ファイルを追加（最初に配置）
         cmd.arg(input_file);
 
@@ -1229,6 +1266,16 @@ impl Command for PlayCommand {
         // 継続時間を設定
         let duration = end_pos.as_seconds() - start_pos.as_seconds();
         cmd.arg("-t").arg(duration.to_string());
+
+        // フレーム操作の説明をユーザーに表示
+        context.logger.info("プレーヤー操作:");
+        context.logger.info("  カンマ「,」キー: 1フレーム戻る");
+        context.logger.info("  ピリオド「.」キー: 1フレーム進む");
+        context.logger.info("  「S」キー: 1フレーム進む (代替キー)");
+        context.logger.info("  スペースキー: 一時停止/再生");
+        context.logger.info("  左右矢印キー: 10秒戻る/進む");
+        context.logger.info("  上下矢印キー: 1分戻る/進む");
+        context.logger.info("  ESCキー: 終了");
 
         // シンプルなログ出力
         context.logger.info("Starting playback...");
