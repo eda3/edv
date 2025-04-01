@@ -5,8 +5,6 @@
 
 // サンプルプラグイン
 pub mod export_plugin;
+pub mod importer_plugin;
 pub mod kawaii_effect;
-
-// その他のサンプルプラグイン（将来追加予定）
-// pub mod import_plugin;
-// pub mod ui_plugin;
+pub mod ui_plugin;
