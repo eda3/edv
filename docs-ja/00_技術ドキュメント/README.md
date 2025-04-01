@@ -79,7 +79,7 @@ journey
     パフォーマンス最適化: 10: done
     GPU高速化: 10: done
     プラグインシステム: 10: done
-    品質保証: 5: active
+    品質保証: 8: active
 ```
 
 ## セクション概要
