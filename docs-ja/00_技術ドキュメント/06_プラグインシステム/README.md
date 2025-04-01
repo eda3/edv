@@ -2,7 +2,7 @@
 
 EDVは強力なプラグインシステムを提供し、アプリケーションの機能を拡張できます。このドキュメントではプラグインシステムの設計と使用方法について説明します。
 
-**最終更新日: 2025年4月1日 09:09:32**
+**最終更新日: 2025年4月1日 09:29:51**
 
 ## 概要
 
@@ -32,93 +32,32 @@ EDVは以下のプラグインタイプをサポートしています：
 
 プラグインシステムは以下のコンポーネントで構成されています：
 
+- **プラグインマネージャー**: プラグインのライフサイクルを管理
+- **プラグインローダー**: プラグインバイナリの読み込みと解析
+- **プラグインレジストリ**: プラグインの登録と検索
+- **プラグインホスト**: ホストアプリケーションとプラグインの通信を仲介
+
 ```mermaid
 graph TD
-    Application[アプリケーション] --> PluginManager[プラグインマネージャー]
+    PluginManager[プラグインマネージャー] --> PluginLoader[プラグインローダー]
+    PluginManager --> PluginRegistry[プラグインレジストリ]
+    PluginManager --> DependencyResolver[依存関係リゾルバー]
     
-    PluginManager --> Loader[プラグインローダー]
-    PluginManager --> Registry[プラグインレジストリ]
-    PluginManager --> Security[セキュリティチェッカー]
-    PluginManager --> Host[ホストインスタンス]
+    PluginLoader --> DynamicLibrary[動的ライブラリローダー]
+    PluginLoader --> ManifestParser[マニフェストパーサー]
     
-    Loader --> Discover[プラグイン検出]
-    Loader --> Load[プラグイン読み込み]
-    Loader --> Instantiate[プラグインインスタンス化]
+    PluginRegistry --> TypeIndex[タイプインデックス]
+    PluginRegistry --> TagIndex[タグインデックス]
+    PluginRegistry --> FeatureRegistry[機能レジストリ]
     
-    Registry --> TypeRegistry[タイプ別レジストリ]
-    Registry --> TagIndex[タグインデックス]
-    Registry --> FeatureRegistry[機能レジストリ]
-    
-    Security --> Permissions[権限管理]
-    Security --> Sandbox[サンドボックス]
-    
-    Host --> HostAPI[ホストAPI]
-    Host --> Logger[ロガー]
-    Host --> Settings[設定管理]
-    
-    subgraph Plugins [プラグイン]
-        EffectPlugin[エフェクトプラグイン]
-        ExporterPlugin[エクスポータープラグイン]
-        ImporterPlugin[インポータープラグイン]
-        UIPlugin[UIプラグイン]
-    end
-    
-    Application --> Plugins
-    Host -.-> Plugins
-    Security -.-> Plugins
+    Host[ホストアプリケーション] <--> PluginManager
+    Host -.-> Plugins[プラグイン]
+    PluginManager --> Plugins
 ```
-
-### プラグインマネージャー
-
-プラグインマネージャーはプラグインシステムの中央コーディネーターとして機能し、以下の責務を持ちます：
-
-- プラグインの検出、読み込み、初期化、シャットダウン、アンロードの管理
-- プラグインの依存関係解決と初期化順序の制御
-- プラグインのライフサイクルイベントの管理
-- ホットリロードのサポート
-- プラグイン情報の取得とクエリ
-
-### プラグインローダー
-
-プラグインローダーはプラグインの検出と読み込みを担当します：
-
-- プラグインディレクトリのスキャンとプラグインの検出
-- プラグインマニフェストの解析と検証
-- 動的ライブラリのロードと初期化
-- プラグインのインスタンス化と依存関係チェック
-
-### プラグインレジストリ
-
-プラグインレジストリはプラグインの登録と検索を提供します：
-
-- プラグインタイプによるインデックス作成
-- タグベースの検索機能
-- 機能ベースのプラグイン検索
-- プラグイン間の機能共有の調整
-
-### セキュリティチェッカー
-
-セキュリティチェッカーはプラグインの安全な実行を確保します：
-
-- 権限モデルの実装
-- ファイルシステムアクセスの制限
-- ネットワークアクセスの制御
-- リソース使用量の監視
-- プラグイン間の相互作用の管理
-
-### ホストインスタンス
-
-ホストインスタンスはプラグインとアプリケーション間のインターフェースを提供します：
-
-- アプリケーションサービスへのアクセス
-- ロギング機能
-- 設定の保存と読み込み
-- イベント通知システム
-- プラグイン間通信のサポート
 
 ## プラグインのライフサイクル
 
-プラグインのライフサイクルは以下の状態で構成されています：
+プラグインは以下のライフサイクル状態を持ちます：
 
 ```mermaid
 stateDiagram-v2
@@ -178,40 +117,18 @@ thread_safe = true
 
 EDVプラグインシステムは細かく設定可能な権限モデルを提供します：
 
-```mermaid
-graph TD
-    Security[セキュリティモデル] --> Permissions[権限管理]
-    Security --> Sandbox[サンドボックス実行]
-    
-    Permissions --> FileSystem[ファイルシステムアクセス]
-    Permissions --> Network[ネットワークアクセス]
-    Permissions --> PluginInteraction[プラグイン間相互作用]
-    Permissions --> Notifications[通知送信]
-    Permissions --> ResourceLimits[リソース制限]
-    
-    FileSystem --> ReadAccess[読み取りアクセス]
-    FileSystem --> WriteAccess[書き込みアクセス]
-    FileSystem --> PathRestrictions[パス制限]
-    
-    Network --> AllowedDomains[許可ドメイン]
-    Network --> AllowedURLs[許可URL]
-    
-    PluginInteraction --> AllowedPlugins[許可プラグイン]
-    
-    ResourceLimits --> MemoryLimit[メモリ制限]
-    ResourceLimits --> CPUTimeLimit[CPU時間制限]
-    ResourceLimits --> DiskIOLimit[ディスクIO制限]
-```
+- **ファイルシステムアクセス**: 読み取り/書き込み権限の制限
+- **ネットワークアクセス**: アウトバウンド接続の制限
+- **UIアクセス**: UIコンポーネントへのアクセス制限
+- **リソース使用**: CPUとメモリ使用量の制限
 
-権限はプラグインごとに設定でき、ユーザーは追加の権限をプラグインに付与するかどうかを選択できます。
+プラグインの安全性を確保するために、サンドボックス化された実行環境を提供しています。
 
 ## サンプルプラグイン
 
-プラグインシステムには参考実装として以下のサンプルプラグインが含まれています：
+EDVには以下のサンプルプラグインが含まれています：
 
-### かわいいエフェクトプラグイン
-
-ビデオにパステルカラーやハートエフェクトを追加するエフェクトプラグインです。
+### 1. かわいいエフェクトプラグイン
 
 ```mermaid
 graph TD
@@ -225,9 +142,9 @@ graph TD
     AddHearts --> Overlay[画像オーバーレイ]
 ```
 
-### WebPエクスポータープラグイン
+かわいいエフェクトプラグインは、画像にパステルカラーとハートエフェクトを適用する簡単なエフェクトプラグインです。
 
-画像をWebP形式でエクスポートするプラグインです。
+### 2. WebPエクスポータープラグイン
 
 ```mermaid
 graph TD
@@ -242,15 +159,67 @@ graph TD
     Encoder --> FileOutput[ファイル出力]
 ```
 
+WebPエクスポーターは、画像をWebP形式でエクスポートするためのプラグインです。品質設定やロスレス圧縮オプションなどをサポートしています。
+
+### 3. PSDインポータープラグイン
+
+```mermaid
+flowchart TD
+    PSDFile[PSDファイル] --> Parser[PSDパーサー]
+    Parser --> LayerExtraction[レイヤー抽出]
+    Parser --> MetadataExtraction[メタデータ抽出]
+    Parser --> EffectExtraction[効果抽出]
+    
+    LayerExtraction --> LayerConversion[EDVレイヤー変換]
+    MetadataExtraction --> MetadataMapping[EDVメタデータマッピング]
+    EffectExtraction --> EffectMapping[EDV効果マッピング]
+    
+    LayerConversion --> FinalImage[EDV画像構造]
+    MetadataMapping --> FinalImage
+    EffectMapping --> FinalImage
+```
+
+PSDインポータープラグインは、Adobe Photoshopファイル形式（`.psd`）をEDVに読み込むためのプラグインです。レイヤー構造やエフェクトを保持したままインポートできます。
+
+### 4. カスタムパネルUIプラグイン
+
+```mermaid
+graph TD
+    UIPlugin[UIプラグイン] --> ThemeProvider[テーマプロバイダー]
+    UIPlugin --> PanelProvider[パネルプロバイダー]
+    UIPlugin --> EventHandler[イベントハンドラー]
+    UIPlugin --> MenuProvider[メニュープロバイダー]
+    
+    ThemeProvider --> CustomColors[カラースキーム定義]
+    ThemeProvider --> CustomFonts[フォント定義]
+    ThemeProvider --> CustomIcons[アイコン定義]
+    
+    PanelProvider --> LeftPanel[左パネル]
+    PanelProvider --> RightPanel[右パネル]
+    PanelProvider --> FloatingPanel[フローティングパネル]
+```
+
+カスタムパネルUIプラグインは、EDVのユーザーインターフェースをカスタマイズし、新しいパネル、テーマ、および機能を追加するためのプラグインです。
+
 ## プラグイン開発ガイド
 
 プラグイン開発者向けのガイドラインは以下のドキュメントを参照してください：
 
-- [エフェクトプラグイン開発ガイド](./01_effect_plugin_guide.md)
-- [エクスポータープラグイン開発ガイド](./02_exporter_plugin_guide.md)
-- [インポータープラグイン開発ガイド](./03_importer_plugin_guide.md)
-- [UIプラグイン開発ガイド](./04_ui_plugin_guide.md)
-- [カスタムプラグイン開発ガイド](./05_custom_plugin_guide.md)
+- [プラグイン基本設計](./01_プラグイン基本設計.md)
+- [プラグインインターフェース](./02_プラグインインターフェース.md)
+- [プラグインライフサイクル](./03_プラグインライフサイクル.md)
+- [プラグインセキュリティ](./04_プラグインセキュリティ.md)
+- [プラグイン開発ガイド](./05_プラグイン開発ガイド.md)
+
+## サンプルプラグインのドキュメント
+
+以下のドキュメントで各サンプルプラグインの詳細を確認できます：
+
+- [かわいいエフェクトプラグイン](./examples/01_kawaii_effect.md)
+- [WebPエクスポータープラグイン](./examples/02_webp_exporter.md)
+- [PSDインポータープラグイン](./examples/03_importer_plugin.md)
+- [カスタムパネルUIプラグイン](./examples/04_ui_plugin.md)
+- [サンプルプラグイン集](./examples/index.md)
 
 ## プラグインの配置とディレクトリ構造
 
@@ -351,10 +320,20 @@ classDiagram
 - ✅ タグベースのプラグイン検索
 - ✅ セキュリティモデルの実装
 - ✅ ホットリロードサポート
-- ✅ サンプルプラグインの実装（エフェクト、エクスポーター）
-- 🔄 プラグイン開発ガイドの執筆
+- ✅ サンプルプラグインの実装（エフェクト、エクスポーター、インポーター、UI）
+- ✅ プラグイン開発ガイドの執筆
 - 🔄 プラグインマーケットプレイスの検討
-- 📅 UIプラグインのサンプル実装
-- 📅 インポータープラグインのサンプル実装
+- 🔄 プラグインテスト自動化フレームワークの開発
+- 📅 プラグイン配布システムの設計
+- 📅 プラグインバージョン管理と更新メカニズムの実装
 
-プラグインシステムに関するフィードバックや質問は、GitHub Issuesを通じてお寄せください。 
+プラグインシステムに関するフィードバックや質問は、GitHub Issuesを通じてお寄せください。
+
+## コミュニティプラグイン
+
+EDVは活発なプラグイン開発コミュニティを持っています。コミュニティによって開発されたプラグインは以下で見つけることができます：
+
+- [EDVプラグインディレクトリ](https://edv.example.com/plugins)
+- [GitHubトピック: edv-plugin](https://github.com/topics/edv-plugin)
+
+独自のプラグインを開発して共有することを歓迎します！ 
