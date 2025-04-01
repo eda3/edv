@@ -108,6 +108,21 @@ pub enum Commands {
         #[arg(short, long)]
         project: PathBuf,
     },
+
+    /// Plays a video file with optional start and end times
+    Play {
+        /// Input file path
+        #[arg(short, long)]
+        input: PathBuf,
+
+        /// Start time in format HH:MM:SS or seconds
+        #[arg(short, long)]
+        start: Option<String>,
+
+        /// End time in format HH:MM:SS or seconds
+        #[arg(short, long)]
+        end: Option<String>,
+    },
 }
 
 impl App {
@@ -173,6 +188,10 @@ impl App {
         // Register project redo command
         self.command_registry
             .register(Box::new(commands::ProjectRedoCommand::new()))?;
+
+        // Register play command
+        self.command_registry
+            .register(Box::new(commands::PlayCommand::new()))?;
 
         Ok(())
     }
@@ -292,6 +311,35 @@ impl App {
                     project_redo_cmd.execute(&context, &args)?;
                 } else {
                     return Err(super::Error::UnknownCommand("project-redo".to_string()));
+                }
+            }
+            Commands::Play { input, start, end } => {
+                self.logger.debug(&format!(
+                    "Executing play command: input={}, start={:?}, end={:?}",
+                    input.display(),
+                    start,
+                    end
+                ));
+
+                // Get the PlayCommand from the registry and execute it
+                if let Ok(play_cmd) = self.command_registry.get("play") {
+                    // Build the arguments list
+                    let mut args = vec![input.to_string_lossy().to_string()];
+
+                    if let Some(start_time) = start {
+                        args.push("--start".to_string());
+                        args.push(start_time);
+                    }
+
+                    if let Some(end_time) = end {
+                        args.push("--end".to_string());
+                        args.push(end_time);
+                    }
+
+                    // Execute the command with arguments and the already created context
+                    play_cmd.execute(&context, &args)?;
+                } else {
+                    return Err(super::Error::UnknownCommand("play".to_string()));
                 }
             }
         }

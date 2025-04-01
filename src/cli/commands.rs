@@ -1,4 +1,5 @@
 use crate::cli::output::{OutputFormatter, ProgressReporter};
+use crate::cli::utils::TimePosition;
 use crate::ffmpeg::{FFmpeg, MediaInfo};
 use chrono::{DateTime, Utc};
 use mime_guess::MimeGuess;
@@ -521,25 +522,26 @@ fn format_file_size(size: u64) -> String {
     }
 }
 
-/// Formats a duration in seconds into a human-readable string.
+/// Formats a duration in seconds to a human-readable string.
 ///
 /// # Arguments
 ///
-/// * `seconds` - The duration in seconds
+/// * `seconds` - Duration in seconds
 ///
 /// # Returns
 ///
-/// A human-readable string representing the duration
+/// A formatted string representing the duration (e.g., "1h 23m 45s")
 fn format_duration(seconds: f64) -> String {
     let hours = (seconds / 3600.0).floor() as u64;
     let minutes = ((seconds % 3600.0) / 60.0).floor() as u64;
     let secs = (seconds % 60.0).floor() as u64;
-    let millis = ((seconds % 1.0) * 1000.0).round() as u64;
 
     if hours > 0 {
-        format!("{}:{:02}:{:02}.{:03}", hours, minutes, secs, millis)
+        format!("{}h {}m {}s", hours, minutes, secs)
+    } else if minutes > 0 {
+        format!("{}m {}s", minutes, secs)
     } else {
-        format!("{}:{:02}.{:03}", minutes, secs, millis)
+        format!("{:.2}s", seconds)
     }
 }
 
@@ -974,6 +976,282 @@ impl Command for ProjectRedoCommand {
             }
             Err(e) => Err(Error::ProjectError(format!("Failed to redo: {e}"))),
         }
+    }
+}
+
+/// Play a video file.
+#[derive(Debug)]
+pub struct PlayCommand;
+
+impl PlayCommand {
+    /// Creates a new play command.
+    #[must_use]
+    pub fn new() -> Self {
+        Self
+    }
+
+    /// Validates that the input file exists and is readable.
+    ///
+    /// # Arguments
+    ///
+    /// * `path` - The path to validate
+    ///
+    /// # Returns
+    ///
+    /// `Ok(())` if the file is valid, or an `Error` otherwise.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the file does not exist or is not readable.
+    fn check_input_file(&self, path: &str) -> Result<()> {
+        let path = Path::new(path);
+        if !path.exists() {
+            return Err(Error::InvalidPath(format!(
+                "Input file does not exist: {}",
+                path.display()
+            )));
+        }
+
+        if !path.is_file() {
+            return Err(Error::InvalidPath(format!(
+                "Input path is not a file: {}",
+                path.display()
+            )));
+        }
+
+        // Try to open the file to check if it's readable
+        match fs::File::open(path) {
+            Ok(_) => Ok(()),
+            Err(e) => Err(Error::InvalidPath(format!(
+                "Input file is not readable: {}: {}",
+                path.display(),
+                e
+            ))),
+        }
+    }
+
+    /// Extract and validate time positions for playing.
+    ///
+    /// # Arguments
+    ///
+    /// * `start_time` - Optional starting time string
+    /// * `end_time` - Optional ending time string
+    /// * `duration` - Total duration of the file in seconds
+    ///
+    /// # Returns
+    ///
+    /// A tuple of (start, end) positions.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the time positions are invalid.
+    fn extract_time_positions(
+        &self,
+        start_time: Option<&str>,
+        end_time: Option<&str>,
+        duration: f64,
+    ) -> Result<(TimePosition, TimePosition)> {
+        // Default start position is beginning of file
+        let start_pos = if let Some(start) = start_time {
+            start
+                .parse::<TimePosition>()
+                .map_err(|e| Error::InvalidTimeFormat(format!("Invalid start time: {start}")))?
+        } else {
+            TimePosition::from_seconds(0.0)
+        };
+
+        // Default end position is end of file
+        let end_pos = if let Some(end) = end_time {
+            end.parse::<TimePosition>()
+                .map_err(|e| Error::InvalidTimeFormat(format!("Invalid end time: {end}")))?
+        } else {
+            TimePosition::from_seconds(duration)
+        };
+
+        // Validate positions
+        if start_pos.as_seconds() < 0.0 {
+            return Err(Error::InvalidTimeFormat(
+                "Start time cannot be negative".to_string(),
+            ));
+        }
+
+        if end_pos.as_seconds() > duration {
+            return Err(Error::InvalidTimeFormat(format!(
+                "End time ({}) exceeds file duration ({})",
+                end_pos.as_seconds(),
+                duration
+            )));
+        }
+
+        if start_pos.as_seconds() >= end_pos.as_seconds() {
+            return Err(Error::InvalidTimeFormat(
+                "Start time must be less than end time".to_string(),
+            ));
+        }
+
+        Ok((start_pos, end_pos))
+    }
+}
+
+impl Command for PlayCommand {
+    fn name(&self) -> &str {
+        "play"
+    }
+
+    fn description(&self) -> &str {
+        "Plays a video file with optional start and end times"
+    }
+
+    fn usage(&self) -> &str {
+        "play --input <input_file> [--start <time>] [--end <time>]"
+    }
+
+    fn execute(&self, context: &Context, args: &[String]) -> Result<()> {
+        if args.is_empty() {
+            return Err(Error::InvalidArgument(
+                "Missing required arguments. Use --help for usage information.".to_string(),
+            ));
+        }
+
+        let input_file = &args[0];
+
+        // Parse remaining arguments
+        let mut start_time = None;
+        let mut end_time = None;
+
+        let mut i = 1;
+        while i < args.len() {
+            match args[i].as_str() {
+                "--start" => {
+                    if i + 1 < args.len() {
+                        start_time = Some(args[i + 1].as_str());
+                        i += 2;
+                    } else {
+                        return Err(Error::InvalidArgument(
+                            "--start requires a value".to_string(),
+                        ));
+                    }
+                }
+                "--end" => {
+                    if i + 1 < args.len() {
+                        end_time = Some(args[i + 1].as_str());
+                        i += 2;
+                    } else {
+                        return Err(Error::InvalidArgument("--end requires a value".to_string()));
+                    }
+                }
+                _ => {
+                    return Err(Error::InvalidArgument(format!(
+                        "Unknown argument: {}",
+                        args[i]
+                    )));
+                }
+            }
+        }
+
+        // Validate input file
+        self.check_input_file(input_file)?;
+
+        // Initialize FFmpeg
+        let ffmpeg = FFmpeg::detect().map_err(|e| Error::FFmpegError(e.to_string()))?;
+
+        // Get media information
+        context
+            .logger
+            .info(&format!("Analyzing media file: {input_file}"));
+        let media_info = ffmpeg
+            .get_media_info(input_file)
+            .map_err(|e| Error::FFmpegError(format!("Failed to get media info: {e}")))?;
+
+        // Get duration from format section
+        let duration_str = media_info.format.duration.as_ref().ok_or_else(|| {
+            Error::CommandExecution("Media file has no duration information".to_string())
+        })?;
+
+        let duration = duration_str
+            .parse::<f64>()
+            .map_err(|_| Error::CommandExecution("Invalid duration in media info".to_string()))?;
+
+        // Extract and validate time positions if provided
+        let (start_pos, end_pos) = self.extract_time_positions(start_time, end_time, duration)?;
+
+        // Build FFmpeg command for playing
+        context.logger.info(&format!(
+            "Playing from {:?} to {:?} (duration: {})",
+            start_pos,
+            end_pos,
+            format_duration(end_pos.as_seconds() - start_pos.as_seconds())
+        ));
+
+        // Get the ffplay path - try to find it in the same directory as ffmpeg
+        let ffmpeg_path = ffmpeg.path();
+        let ffplay_path = if cfg!(windows) {
+            // On Windows, replace ffmpeg.exe with ffplay.exe
+            let mut ffplay = ffmpeg_path
+                .parent()
+                .unwrap_or_else(|| Path::new(""))
+                .to_path_buf();
+            ffplay.push("ffplay.exe");
+            ffplay
+        } else {
+            // On Unix, replace ffmpeg with ffplay
+            let mut ffplay = ffmpeg_path
+                .parent()
+                .unwrap_or_else(|| Path::new(""))
+                .to_path_buf();
+            ffplay.push("ffplay");
+            ffplay
+        };
+
+        // Create command for ffplay
+        context
+            .logger
+            .info(&format!("Using ffplay: {:?}", ffplay_path));
+        let mut cmd = std::process::Command::new(ffplay_path);
+
+        // 基本的な設定だけにシンプル化
+        cmd.arg("-autoexit");
+        cmd.arg("-window_title")
+            .arg(format!("EDV Player - {}", input_file));
+
+        // ログレベルを警告のみに設定（静かな出力）
+        cmd.arg("-loglevel").arg("warning");
+
+        // 同期オプション - ビデオ優先に変更
+        cmd.arg("-sync").arg("video");
+
+        // 入力ファイルを追加（最初に配置）
+        cmd.arg(input_file);
+
+        // 開始時間を設定
+        cmd.arg("-ss").arg(start_pos.as_seconds().to_string());
+
+        // 継続時間を設定
+        let duration = end_pos.as_seconds() - start_pos.as_seconds();
+        cmd.arg("-t").arg(duration.to_string());
+
+        // シンプルなログ出力
+        context.logger.info("Starting playback...");
+
+        // Execute command
+        match cmd.status() {
+            Ok(status) => {
+                if status.success() {
+                    context.logger.info("Playback completed successfully");
+                } else {
+                    return Err(Error::CommandExecution(
+                        "Playback terminated with an error".to_string(),
+                    ));
+                }
+            }
+            Err(e) => {
+                return Err(Error::CommandExecution(format!(
+                    "Failed to start playback: {e}"
+                )));
+            }
+        }
+
+        Ok(())
     }
 }
 
