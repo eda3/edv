@@ -49,7 +49,7 @@ mindmap
       設計:::done
       ライフサイクル:::done
       セキュリティ:::done
-      開発ガイド:::current
+      開発ガイド:::done
 
   classDef done fill:#9f9,stroke:#6c6,color:#000
   classDef current fill:#ff9,stroke:#c96,color:#000
@@ -78,7 +78,7 @@ journey
   section フェーズ4: 最適化と拡張
     パフォーマンス最適化: 10: done
     GPU高速化: 10: done
-    プラグインシステム: 8: active
+    プラグインシステム: 10: done
     品質保証: 5: active
 ```
 
@@ -276,7 +276,7 @@ graph TD
     ExporterPlugin --> WebpExporter[WebpExporterPlugin]
     
     Application --> Plugins
-    Host -.-> Plugins
+    Host --> Plugins
     Security -.-> Plugins
 ```
 
