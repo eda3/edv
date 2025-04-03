@@ -619,12 +619,26 @@ impl FramePlayer {
                                     // フレーム番号表示（ドラッグ中のフレーム番号）
                                     canvas.set_draw_color(sdl2::pixels::Color::RGB(255, 255, 255));
                                     let window = canvas.window_mut();
+                                    
+                                    // 時間計算（分:秒形式）
+                                    let current_seconds = target_frame as f64 / self.frame_rate;
+                                    let current_minutes = (current_seconds / 60.0).floor();
+                                    let current_secs = current_seconds % 60.0;
+                                    
+                                    let total_seconds = total as f64 / self.frame_rate;
+                                    let total_minutes = (total_seconds / 60.0).floor();
+                                    let total_secs = total_seconds % 60.0;
+                                    
                                     window
                                         .set_title(&format!(
-                                            "{} - Frame {}/{} (ドラッグ中)",
+                                            "{} - Frame {}/{} - 時間 {:02}:{:05.2}/{:02}:{:05.2} (ドラッグ中)",
                                             self.title,
                                             target_frame + 1,
-                                            total
+                                            total,
+                                            current_minutes as u32, 
+                                            current_secs,
+                                            total_minutes as u32, 
+                                            total_secs
                                         ))
                                         .unwrap_or_default();
 
@@ -647,12 +661,26 @@ impl FramePlayer {
                         // ウィンドウタイトルの更新（FPSを含む）
                         let total = *self.total_frames.lock().unwrap();
                         let window = canvas.window_mut();
+                        
+                        // 時間計算（分:秒形式）
+                        let current_seconds = current as f64 / self.frame_rate;
+                        let current_minutes = (current_seconds / 60.0).floor();
+                        let current_secs = current_seconds % 60.0;
+                        
+                        let total_seconds = total as f64 / self.frame_rate;
+                        let total_minutes = (total_seconds / 60.0).floor();
+                        let total_secs = total_seconds % 60.0;
+                        
                         window
                             .set_title(&format!(
-                                "{} - Frame {}/{} - {:.1} FPS",
+                                "{} - Frame {}/{} - 時間 {:02}:{:05.2}/{:02}:{:05.2} - {:.1} FPS",
                                 self.title,
                                 current + 1,
                                 total,
+                                current_minutes as u32,
+                                current_secs,
+                                total_minutes as u32,
+                                total_secs,
                                 current_fps
                             ))
                             .unwrap_or_default();
