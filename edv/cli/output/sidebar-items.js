@@ -1,0 +1,1 @@
+window.SIDEBAR_ITEMS = {"enum":["OutputLevel"],"fn":["format_duration","format_message","print_error","print_message","print_success","print_table","print_warning"],"struct":["OutputFormatter","ProgressBar","ProgressReporter"]};

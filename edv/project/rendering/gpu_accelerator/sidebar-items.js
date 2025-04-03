@@ -1,0 +1,1 @@
+window.SIDEBAR_ITEMS = {"fn":["create_gpu_accelerator","has_gpu_acceleration"],"struct":["GpuAccelerator","GpuBenchmarkResult"]};

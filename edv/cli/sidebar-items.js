@@ -1,0 +1,1 @@
+window.SIDEBAR_ITEMS = {"enum":["Error"],"fn":["run"],"mod":["app","args","commands","output","utils"],"struct":["App","CommandRegistry","OutputFormatter","ProgressReporter"],"trait":["Command"],"type":["Result"]};

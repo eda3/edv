@@ -1,0 +1,1 @@
+window.SIDEBAR_ITEMS = {"enum":["BlendMode","CompositionError"],"struct":["FFmpegCommand","IntermediateFile","PreparedTrack","TrackCompositor"],"type":["Result"]};

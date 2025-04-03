@@ -1,0 +1,1 @@
+window.SIDEBAR_ITEMS = {"fn":["detect_format_from_content","parse_srt","parse_srt_entry","parse_srt_file","parse_ssa","parse_subtitle_file","parse_subviewer","parse_time","parse_vtt","parse_vtt_entry","parse_vtt_time","parse_webvtt_file"]};

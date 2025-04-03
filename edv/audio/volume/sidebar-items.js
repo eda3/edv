@@ -1,0 +1,1 @@
+window.SIDEBAR_ITEMS = {"enum":["VolumeAdjustment"],"fn":["adjust_volume","adjust_volume_temporal","normalize_volume"],"struct":["TemporalAdjustment"]};
