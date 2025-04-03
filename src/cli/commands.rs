@@ -822,7 +822,9 @@ impl Command for TrimCommand {
         // フレームカウンター表示 - Windows環境では問題があるため実装しない
         if show_frames && !cfg!(windows) {
             // Unix環境でのみフレーム表示を行う
-            ffmpeg_cmd.add_output_option("-vf", "drawtext=text=%{n}/%{nb_frames}:fontcolor=white");
+            ffmpeg_cmd
+                .arg("-vf")
+                .arg("drawtext=text=%{n}/%{nb_frames}:fontcolor=white");
         }
 
         // 統計情報表示（コンソールに表示）- 常に有効
