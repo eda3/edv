@@ -10,6 +10,7 @@ use log::debug;
 
 use crate::core::console::ConsoleLogger;
 use crate::core::{Config, Context, LogLevel, Logger};
+use crate::gui::GuiPlayCommand;
 
 use super::{CommandRegistry, Result};
 use crate::cli::commands;
@@ -123,6 +124,25 @@ pub enum Commands {
         #[arg(short, long)]
         end: Option<String>,
     },
+
+    /// Plays a video file with a simple GUI player
+    GuiPlay {
+        /// Input file path
+        #[arg(short, long)]
+        input: PathBuf,
+
+        /// Video width in pixels
+        #[arg(long)]
+        width: Option<u32>,
+
+        /// Video height in pixels
+        #[arg(long)]
+        height: Option<u32>,
+
+        /// Frame rate (fps)
+        #[arg(long)]
+        fps: Option<f64>,
+    },
 }
 
 impl App {
@@ -192,6 +212,10 @@ impl App {
         // Register play command
         self.command_registry
             .register(Box::new(commands::PlayCommand::new()))?;
+
+        // Register GUI play command
+        self.command_registry
+            .register(Box::new(GuiPlayCommand::new()))?;
 
         Ok(())
     }
@@ -340,6 +364,46 @@ impl App {
                     play_cmd.execute(&context, &args)?;
                 } else {
                     return Err(super::Error::UnknownCommand("play".to_string()));
+                }
+            }
+            Commands::GuiPlay {
+                input,
+                width,
+                height,
+                fps,
+            } => {
+                self.logger.debug(&format!(
+                    "Executing GUI play command: input={}, width={:?}, height={:?}, fps={:?}",
+                    input.display(),
+                    width,
+                    height,
+                    fps
+                ));
+
+                // Get the GuiPlayCommand from the registry and execute it
+                if let Ok(gui_play_cmd) = self.command_registry.get("gui-play") {
+                    // Build the arguments list
+                    let mut args = vec![input.to_string_lossy().to_string()];
+
+                    if let Some(w) = width {
+                        args.push("--width".to_string());
+                        args.push(w.to_string());
+                    }
+
+                    if let Some(h) = height {
+                        args.push("--height".to_string());
+                        args.push(h.to_string());
+                    }
+
+                    if let Some(f) = fps {
+                        args.push("--fps".to_string());
+                        args.push(f.to_string());
+                    }
+
+                    // Execute the command with arguments and the already created context
+                    gui_play_cmd.execute(&context, &args)?;
+                } else {
+                    return Err(super::Error::UnknownCommand("gui-play".to_string()));
                 }
             }
         }

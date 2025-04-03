@@ -23,6 +23,7 @@ pub mod audio;
 pub mod cli;
 pub mod core;
 pub mod ffmpeg;
+pub mod gui;
 pub mod processing;
 pub mod project;
 pub mod subtitle;
