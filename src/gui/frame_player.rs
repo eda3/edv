@@ -1,4 +1,4 @@
-use std::io;
+use std::fs;
 use std::path::{Path, PathBuf};
 use std::process::Command;
 use std::sync::{Arc, Mutex};
@@ -7,10 +7,13 @@ use std::time::{Duration, Instant};
 
 use crate::cli::Result;
 use crate::ffmpeg::FFmpeg;
+use sdl2::event::Event;
+use sdl2::keyboard::Keycode;
+use sdl2::pixels::PixelFormatEnum;
+use sdl2::rect::Rect;
 
 /// A simple frame-based video player that uses FFmpeg to extract frames
-/// and display them, creating a basic GUI experience without external
-/// GUI libraries.
+/// and display them using SDL2, creating a lightweight GUI experience.
 pub struct FramePlayer {
     ffmpeg: FFmpeg,
     frame_width: u32,
@@ -120,81 +123,15 @@ impl FramePlayer {
         Ok(())
     }
 
-    /// Adds overlays to the extracted frames
-    fn add_overlay_to_frames(&self) -> Result<()> {
-        println!("🖌️ Adding overlays to frames...");
-
-        let frames_path = self.temp_dir.join("frame_%04d.jpg");
-        let overlay_path = self.temp_dir.join("overlay_%04d.jpg");
-
-        let mut cmd = Command::new(self.ffmpeg.path());
-        cmd.arg("-i")
-            .arg(frames_path.to_str().unwrap())
-            .arg("-vf")
-            // Add information overlay
-            .arg(concat!(
-                "drawtext=text='%{n} / %{frame_num}':x=10:y=10:fontcolor=white:fontsize=24,",
-                "drawtext=text='EDV Player':x=w-tw-10:y=10:fontcolor=white:fontsize=24,",
-                "drawbox=x=10:y=h-30:w=w-20:h=20:color=blue@0.5:t=2"
-            ))
-            .arg("-q:v")
-            .arg("3")
-            .arg(overlay_path.to_str().unwrap());
-
-        let output = cmd.output()?;
-        if !output.status.success() {
-            let error = String::from_utf8_lossy(&output.stderr);
-            return Err(crate::cli::Error::CommandExecution(format!(
-                "Adding overlays failed: {}",
-                error
-            )));
-        }
-
-        println!("✅ Overlays added successfully");
-
-        Ok(())
-    }
-
-    /// Updates the console UI
-    fn update_console_ui(&self) -> Result<()> {
-        // Clear terminal
-        print!("\x1B[2J\x1B[1;1H");
-
-        // Display UI
-        println!("┌──────────────────────────────────────────────┐");
-        println!("│  {} ", self.title);
-        println!("├──────────────────────────────────────────────┤");
-
-        // Progress bar showing current position
-        let current = *self.current_frame.lock().unwrap();
-        let total = *self.total_frames.lock().unwrap();
-        let progress = if total > 0 { current * 30 / total } else { 0 };
-
-        print!("│  [");
-        for i in 0..30 {
-            if i < progress {
-                print!("=");
-            } else if i == progress {
-                print!(">");
-            } else {
-                print!(" ");
-            }
-        }
-        println!("] {}/{}", current + 1, total);
-
-        // Controls
-        println!("├──────────────────────────────────────────────┤");
-        println!("│  Space: Play/Pause  ←/→: Previous/Next frame │");
-        println!("│  q: Quit  f: Toggle fullscreen               │");
-        println!("└──────────────────────────────────────────────┘");
-
-        Ok(())
-    }
-
-    /// Displays the current frame in an image viewer
-    fn display_current_frame(&self) -> Result<()> {
-        let current = *self.current_frame.lock().unwrap();
-        let frame_path = self.temp_dir.join(format!("frame_{:04}.jpg", current + 1));
+    /// Loads a frame as an SDL2 texture
+    fn load_frame_texture<'a>(
+        &self,
+        frame_number: usize,
+        texture_creator: &'a sdl2::render::TextureCreator<sdl2::video::WindowContext>,
+    ) -> Result<sdl2::render::Texture<'a>> {
+        let frame_path = self
+            .temp_dir
+            .join(format!("frame_{:04}.jpg", frame_number + 1));
 
         if !frame_path.exists() {
             return Err(crate::cli::Error::InvalidPath(format!(
@@ -203,59 +140,93 @@ impl FramePlayer {
             )));
         }
 
-        // Launch viewer based on OS
-        if cfg!(target_os = "windows") {
-            Command::new("cmd")
-                .args(["/C", "start", "", frame_path.to_str().unwrap()])
-                .spawn()?;
-        } else if cfg!(target_os = "macos") {
-            Command::new("open").arg(frame_path).spawn()?;
-        } else {
-            // Try common Linux image viewers
-            let viewers = ["xdg-open", "display", "eog", "feh"];
-            let mut success = false;
+        println!("🖼️ Loading frame {}: {:?}", frame_number + 1, frame_path);
 
-            for viewer in viewers {
-                if let Ok(status) = Command::new(viewer)
-                    .arg(&frame_path)
-                    .spawn()
-                    .and_then(|mut child| child.wait())
-                {
-                    if status.success() {
-                        success = true;
-                        break;
-                    }
-                }
-            }
+        // SDL2でテクスチャを作成
+        let img = image::open(&frame_path)
+            .map_err(|e| {
+                crate::cli::Error::CommandExecution(format!("Failed to load image: {}", e))
+            })?
+            .to_rgb8();
 
-            if !success {
-                return Err(crate::cli::Error::CommandExecution(
-                    "Failed to open image viewer".to_string(),
-                ));
-            }
-        }
+        println!("🎨 Image loaded: {}x{}", img.width(), img.height());
 
-        Ok(())
+        // SDL2テクスチャの作成
+        let mut texture = texture_creator
+            .create_texture_streaming(PixelFormatEnum::RGB24, img.width(), img.height())
+            .map_err(|e| {
+                crate::cli::Error::CommandExecution(format!("Failed to create texture: {}", e))
+            })?;
+
+        // テクスチャにピクセルデータをコピー
+        texture
+            .update(
+                None,
+                &img.as_raw(),
+                img.width() as usize * 3, // RGB24なので1ピクセルあたり3バイト
+            )
+            .map_err(|e| {
+                crate::cli::Error::CommandExecution(format!("Failed to update texture: {}", e))
+            })?;
+
+        println!("✅ Texture created successfully");
+        Ok(texture)
     }
 
     /// Plays the video file
     pub fn play(&self, input_file: &Path) -> Result<()> {
         // Extract frames
-        println!("🎬 Starting EDV Frame Player");
+        println!("🎬 Starting EDV Frame Player with SDL2");
         self.extract_frames(input_file)?;
 
-        // Add overlays to frames (optional feature)
-        // self.add_overlay_to_frames()?;
+        // SDL2の初期化
+        let sdl_context = sdl2::init()
+            .map_err(|e| crate::cli::Error::CommandExecution(format!("SDL2 init failed: {}", e)))?;
 
-        // Start playback
+        let video_subsystem = sdl_context.video().map_err(|e| {
+            crate::cli::Error::CommandExecution(format!("Video init failed: {}", e))
+        })?;
+
+        // ウィンドウ作成
+        let window = video_subsystem
+            .window(&self.title, self.frame_width, self.frame_height)
+            .position_centered()
+            .resizable()
+            .build()
+            .map_err(|e| {
+                crate::cli::Error::CommandExecution(format!("Window creation failed: {}", e))
+            })?;
+
+        // レンダラー作成
+        let mut canvas = window
+            .into_canvas()
+            .accelerated()
+            .present_vsync()
+            .build()
+            .map_err(|e| {
+                crate::cli::Error::CommandExecution(format!("Renderer creation failed: {}", e))
+            })?;
+
+        // テクスチャクリエイター
+        let texture_creator = canvas.texture_creator();
+
+        // イベントポンプ
+        let mut event_pump = sdl_context.event_pump().map_err(|e| {
+            crate::cli::Error::CommandExecution(format!("Event pump creation failed: {}", e))
+        })?;
+
+        // 再生状態
         *self.playing.lock().unwrap() = true;
-
-        // Run player loop in separate thread
         let playing = Arc::clone(&self.playing);
         let current_frame = Arc::clone(&self.current_frame);
         let total_frames = Arc::clone(&self.total_frames);
         let frame_rate = self.frame_rate;
 
+        // 最初のフレームをロード
+        let frame_number = *current_frame.lock().unwrap();
+        let mut current_texture = self.load_frame_texture(frame_number, &texture_creator)?;
+
+        // フレーム再生スレッド
         let player_thread = thread::spawn(move || {
             let frame_duration = Duration::from_secs_f64(1.0 / frame_rate);
 
@@ -269,12 +240,12 @@ impl FramePlayer {
                     if *frame < total - 1 {
                         *frame += 1;
                     } else {
-                        // Loop playback
+                        // ループ再生
                         *frame = 0;
                     }
                 }
 
-                // Maintain frame rate
+                // フレームレートの維持
                 let elapsed = start.elapsed();
                 if elapsed < frame_duration {
                     thread::sleep(frame_duration - elapsed);
@@ -282,78 +253,94 @@ impl FramePlayer {
             }
         });
 
-        // First display of the current frame
-        self.display_current_frame()?;
-
-        // Main thread handles UI updates and input processing
-        self.handle_input()?;
-
-        // Cleanup
-        *self.playing.lock().unwrap() = false;
-        player_thread.join().unwrap();
-
-        println!("👋 EDV Frame Player closed");
-
-        Ok(())
-    }
-
-    /// Handles keyboard input
-    fn handle_input(&self) -> Result<()> {
-        // Note: This is a simplified input handler
-        // In a real implementation, you might want to use a crate like
-        // crossterm for better terminal input handling
-
-        println!("💡 Control with keyboard: Space to play/pause, q to quit");
-
-        let stdin = std::io::stdin();
-
-        loop {
-            // Update UI
-            self.update_console_ui()?;
-
-            // Check for input (non-blocking)
-            let mut input = String::new();
-            if let Ok(_) = stdin.read_line(&mut input) {
-                match input.trim() {
-                    "q" | "Q" => break,
-                    " " => {
-                        let mut playing = self.playing.lock().unwrap();
-                        *playing = !*playing;
-                        println!(
-                            "▶️ Playback {}",
-                            if *playing { "resumed" } else { "paused" }
-                        );
-                    }
-                    ">" | "." => {
-                        let mut frame = self.current_frame.lock().unwrap();
-                        let total = *self.total_frames.lock().unwrap();
-                        if *frame < total - 1 {
-                            *frame += 1;
-                            self.display_current_frame()?;
+        // メインループ
+        let mut last_frame = frame_number;
+        'running: loop {
+            // イベント処理
+            for event in event_pump.poll_iter() {
+                match event {
+                    Event::Quit { .. } => break 'running,
+                    Event::KeyDown {
+                        keycode: Some(keycode),
+                        ..
+                    } => match keycode {
+                        Keycode::Q => break 'running,
+                        Keycode::Space => {
+                            let mut playing_lock = self.playing.lock().unwrap();
+                            *playing_lock = !*playing_lock;
+                            println!(
+                                "▶️ Playback {}",
+                                if *playing_lock { "resumed" } else { "paused" }
+                            );
                         }
-                    }
-                    "<" | "," => {
-                        let mut frame = self.current_frame.lock().unwrap();
-                        if *frame > 0 {
-                            *frame -= 1;
-                            self.display_current_frame()?;
+                        Keycode::Period => {
+                            let mut frame = self.current_frame.lock().unwrap();
+                            let total = *self.total_frames.lock().unwrap();
+                            if *frame < total - 1 {
+                                *frame += 1;
+                            }
                         }
-                    }
+                        Keycode::Comma => {
+                            let mut frame = self.current_frame.lock().unwrap();
+                            if *frame > 0 {
+                                *frame -= 1;
+                            }
+                        }
+                        _ => {}
+                    },
                     _ => {}
                 }
             }
 
-            // Small delay to prevent CPU hogging
-            thread::sleep(Duration::from_millis(100));
+            // フレーム更新
+            let current = *self.current_frame.lock().unwrap();
+            if current != last_frame {
+                // 新しいフレームをロード
+                match self.load_frame_texture(current, &texture_creator) {
+                    Ok(texture) => {
+                        current_texture = texture;
+                        // ウィンドウタイトルの更新
+                        let total = *self.total_frames.lock().unwrap();
+                        let window = canvas.window_mut();
+                        window
+                            .set_title(&format!(
+                                "{} - Frame {}/{} - {} FPS",
+                                self.title,
+                                current + 1,
+                                total,
+                                self.frame_rate
+                            ))
+                            .unwrap_or_default();
+                    }
+                    Err(e) => println!("Error loading frame: {:?}", e),
+                }
+                last_frame = current;
+            }
+
+            // 描画
+            canvas.clear();
+            let dst = Rect::new(0, 0, self.frame_width, self.frame_height);
+            canvas
+                .copy(&current_texture, None, Some(dst))
+                .unwrap_or_default();
+            canvas.present();
+
+            // 少し休む
+            thread::sleep(Duration::from_millis(10));
         }
 
+        // クリーンアップ
+        *self.playing.lock().unwrap() = false;
+        player_thread.join().unwrap();
+
+        println!("👋 EDV Frame Player closed");
         Ok(())
     }
 }
 
 impl Drop for FramePlayer {
     fn drop(&mut self) {
-        // Attempt to clean up temporary files when the player is dropped
+        // プレーヤーが削除されたときに一時ファイルをクリーンアップ
         if self.temp_dir.exists() {
             if let Err(e) = std::fs::remove_dir_all(&self.temp_dir) {
                 eprintln!("Warning: Failed to clean up temporary directory: {}", e);
